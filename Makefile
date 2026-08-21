@@ -12,7 +12,7 @@ x11:
 	go build -o logos2d .
 
 run: build
-	./logos2d
+	./logos2d demo/main.lgs
 
 install: build
 	install -m755 logos2d $(PREFIX)/bin/logos2d

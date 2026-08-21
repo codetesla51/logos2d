@@ -1,25 +1,33 @@
 // ============================================================
-// GALAGA DEFENSE — the full build
-// Move: A/D or arrows   Fire: hold SPACE   Music: M   Quit: ESC
-// Powerups drop from kills:
-//   green capsule = RAPID laser    red capsule = TWIN laser
-//   shield bubble = 6s invulnerability
-// Meteors tank 2 hits. Black enemies tank 3. Don't let anything past you!
+// GALAGA DEFENSE — full arsenal build
+// Move: A/D or arrows   Fire: hold SPACE   Music: M toggle
+// Powerups: green bolt RAPID / red bolt TWIN / blue orb SHIELD /
+//           yellow star +1 LIFE
+// Enemies: red diver, blue wobbler, green drifter, black tank,
+//          and a 5-HP UFO worth 150 that strafes across the top!
 // ============================================================
 
 fn on_load() {
     preload_sprite("background.png")
     preload_sprite("player.png")
+    preload_sprite("player_dmg1.png")
+    preload_sprite("player_dmg2.png")
     preload_sprite("enemy.png")
     preload_sprite("enemy_black.png")
     preload_sprite("enemy_blue.png")
     preload_sprite("enemy_green.png")
+    preload_sprite("ufo.png")
     preload_sprite("meteor.png")
     preload_sprite("bullet.png")
     preload_sprite("laser_green.png")
     preload_sprite("laser_red.png")
     preload_sprite("flame.png")
+    preload_sprite("speed.png")
     preload_sprite("shield.png")
+    preload_sprite("pu_rapid.png")
+    preload_sprite("pu_twin.png")
+    preload_sprite("pu_shield.png")
+    preload_sprite("pu_heart.png")
     play_music("music.mp3")
     print("game loaded")
 }
@@ -36,17 +44,18 @@ let frame_t = 0
 let cooldown = 0
 let spawn_every = 80
 let meteor_every = 210
+let ufo_every = 540      // first UFO at ~9s
 
-let weapon = "blue"      // blue | green | red
-let weapon_t = 0         // ticks left on picked-up weapon (0 = forever default)
-let shield_t = 0         // shield active ticks
-let music_on = true      // starts playing in on_load
+let weapon = "blue"
+let weapon_t = 0
+let shield_t = 0
+let music_on = true
 
 let bullets = []
 let enemies = []
 let meteors = []
 let powerups = []
-let booms = []           // explosion effects
+let booms = []
 
 const W = 320
 const H = 240
@@ -79,26 +88,45 @@ fn spawn_enemy() {
     let roll = random(1, 10)
     let e = table{x: random(8, W - 26), y: -24, spd: 0.9, vx: 0.0, hp: 1, pts: 10, img: "enemy.png", ph: random(0, 100)}
     if roll <= 4 {
-        e.img = "enemy.png"          // red diver
+        e.img = "enemy.png"
         e.spd = random(10, 14) / 10.0
         e.pts = 10
     }
     if roll >= 5 && roll <= 6 {
-        e.img = "enemy_blue.png"     // wobbler
+        e.img = "enemy_blue.png"
         e.spd = random(7, 9) / 10.0
         e.pts = 15
     }
     if roll == 7 || roll == 8 {
-        e.img = "enemy_green.png"    // drifter
+        e.img = "enemy_green.png"
         e.spd = random(5, 7) / 10.0
         e.vx = random(-15, 15) / 10.0
         e.pts = 15
     }
     if roll >= 9 {
-        e.img = "enemy_black.png"    // tank
+        e.img = "enemy_black.png"
         e.spd = random(3, 5) / 10.0
         e.hp = 3
         e.pts = 40
+    }
+    enemies = push(enemies, e)
+}
+
+fn spawn_ufo() {
+    let from_left = random(0, 1)
+    let e = table{
+        x: -30.0,
+        y: random(30, 90),
+        spd: 0.0,
+        vx: 0.9,
+        hp: 5,
+        pts: 150,
+        img: "ufo.png",
+        ph: random(0, 100)
+    }
+    if from_left == 1 {
+        e.x = W + 30
+        e.vx = 0 - 0.9
     }
     enemies = push(enemies, e)
 }
@@ -150,6 +178,7 @@ fn reset_game() {
     cooldown = 0
     spawn_every = 80
     meteor_every = 210
+    ufo_every = 540
     weapon = "blue"
     weapon_t = 0
     shield_t = 0
@@ -237,15 +266,28 @@ fn on_update(dt) {
     if frame_t % meteor_every == 0 {
         spawn_meteor()
     }
+    if frame_t % ufo_every == 0 {
+        spawn_ufo()
+        ufo_every = 700 + random(0, 300)
+    }
 
-    // ---- enemies descend ----
+    // ---- enemies descend; UFOs strafe across ----
     let ae = []
     for e in enemies {
-        e.y = e.y + e.spd
-        e.x = e.x + math_sin((frame_t + e.ph) / 16.0) * 0.5 + e.vx
-        if e.x < 0 { e.x = 0 }
-        if e.x > W - 18 { e.x = W - 18 }
-        ae = push(ae, e)
+        if e.img == "ufo.png" {
+            e.x = e.x + e.vx
+            e.y = e.y + math_sin((frame_t + e.ph) / 24.0) * 0.4
+            let offscreen = e.x < -40 || e.x > W + 40
+            if !offscreen {
+                ae = push(ae, e)
+            }
+        } else {
+            e.y = e.y + e.spd
+            e.x = e.x + math_sin((frame_t + e.ph) / 16.0) * 0.5 + e.vx
+            if e.x < 0 { e.x = 0 }
+            if e.x > W - 18 { e.x = W - 18 }
+            ae = push(ae, e)
+        }
     }
     enemies = ae
 
@@ -315,10 +357,12 @@ fn on_update(dt) {
     let keep_e = []
     for e in enemies {
         let gone = false
-        if e.y > H - 20 {
-            gone = true
-            if score >= 5 {
-                score = score - 5
+        if e.img != "ufo.png" {
+            if e.y > H - 20 {
+                gone = true
+                if score >= 5 {
+                    score = score - 5
+                }
             }
         }
         if rects_overlap(px + 4, 206, 8, 12, e.x + 1, e.y + 1, 16, 16) {
@@ -418,30 +462,30 @@ fn on_draw() {
         draw_sprite_ex("meteor.png", m.x + 10, m.y + 10, 0.45, m.rot)
     }
 
-    // enemies face down
+    // enemies face down; fast divers get speed lines; all get fire06 exhaust
     for e in enemies {
+        if e.img != "ufo.png" {
+            draw_sprite_ex("flame.png", e.x + 9, e.y - 6, 0.5, 180)
+        }
+        if e.img == "enemy.png" {
+            draw_sprite_ex("speed.png", e.x + 9, e.y - 30, 0.4, 180)
+        }
         draw_sprite_ex(e.img, e.x + 9, e.y + 9, 0.22, 180)
     }
 
-    // powerups: colored capsules
+    // powerups as real sprites
     for pu in powerups {
-        let c = "#2ecc71"
+        let pimg = "pu_rapid.png"
         if pu.kind == "twin" {
-            c = "#e74c3c"
+            pimg = "pu_twin.png"
         }
         if pu.kind == "shield" {
-            c = "#3498db"
+            pimg = "pu_shield.png"
         }
         if pu.kind == "heart" {
-            c = "#ff6b81"
+            pimg = "pu_heart.png"
         }
-        draw_circle(pu.x, pu.y, 5, c)
-        if pu.kind == "heart" {
-            draw_rect(pu.x - 3, pu.y - 1, 6, 2, "#ffffff")
-            draw_rect(pu.x - 1, pu.y - 3, 2, 6, "#ffffff")
-        } else {
-            draw_circle(pu.x, pu.y, 2, "#ffffff")
-        }
+        draw_sprite_ex(pimg, pu.x, pu.y, 0.45, 0)
     }
 
     // bullets with their own colors
@@ -449,13 +493,20 @@ fn on_draw() {
         draw_sprite_ex(b.img, b.x, b.y, 0.3, 0)
     }
 
-    // player + thruster + shield
+    // player: damage states by hp, thruster while moving, shield bubble
     let moving = key_down("left") || key_down("right") || key_down("a") || key_down("d")
     if moving {
-        draw_sprite_frame("flame.png", px + 4, 224, 16, 40, frame_t / 3 % 10)
+        draw_sprite_ex("flame.png", px + 8, 226, 0.5, 0)
     }
     if inv == 0 || frame_t % 8 < 5 {
-        draw_sprite_ex("player.png", px + 8, 212, 0.22, 0)
+        let pimg = "player.png"
+        if hp == 2 {
+            pimg = "player_dmg1.png"
+        }
+        if hp <= 1 {
+            pimg = "player_dmg2.png"
+        }
+        draw_sprite_ex(pimg, px + 8, 212, 0.22, 0)
     }
     if cooldown > 5 {
         draw_circle(px + 8, 200, 2, "#f1c40f")
@@ -475,14 +526,12 @@ fn on_draw() {
     }
 
     // ------- HUD -------
-    let hx = 270
     for i in range(0, hp, 1) {
-        draw_circle(hx + i * 14 + 5, 12, 5, "#e74c3c")
+        draw_sprite_ex("life_icon.png", 288 + i * 13, 12, 0.42, 0)
     }
     draw_text("SCORE ${score}", 8, 24, "#ffffff")
     draw_text("kills: ${kills}", 8, 38, "#aaaaaa")
 
-    // powerup status, small, right side under the hearts
     let wx = 312
     if weapon == "green" {
         let l = "RAPID ${weapon_t / 60}"

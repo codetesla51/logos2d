@@ -1,17 +1,11 @@
 // ============================================================
-// GALAGA DEFENSE — full arsenal build
-// Move: A/D or arrows   Fire: hold SPACE   Music: M toggle
-// Powerups: green bolt RAPID / red bolt TWIN / blue orb SHIELD /
-//           yellow star +1 LIFE
-// Enemies: red diver, blue wobbler, green drifter, black tank,
-//          and a 5-HP UFO worth 150 that strafes across the top!
+// GALAGA DEFENSE — with menu, pause, shake, particles, glide
+// Move: A/D or arrows   Fire: hold SPACE   Pause: P   Music: M
 // ============================================================
 
 fn on_load() {
     preload_sprite("background.png")
     preload_sprite("player.png")
-    preload_sprite("player_dmg1.png")
-    preload_sprite("player_dmg2.png")
     preload_sprite("enemy.png")
     preload_sprite("enemy_black.png")
     preload_sprite("enemy_blue.png")
@@ -21,7 +15,6 @@ fn on_load() {
     preload_sprite("bullet.png")
     preload_sprite("laser_green.png")
     preload_sprite("laser_red.png")
-    preload_sprite("speed.png")
     preload_sprite("shield.png")
     preload_sprite("pu_rapid.png")
     preload_sprite("pu_twin.png")
@@ -33,33 +26,62 @@ fn on_load() {
 
 // ---------------- state ----------------
 
+let state = "menu"       // menu | play | pause | over
+
 let px = 152.0
+let pvx = 0.0            // player velocity (glide easing)
 let hp = 3
 let score = 0
 let kills = 0
 let inv = 0
-let over = false
 let frame_t = 0
 let cooldown = 0
 let spawn_every = 80
 let meteor_every = 210
-let ufo_every = 540      // first UFO at ~9s
+let ufo_every = 540
 
 let weapon = "blue"
 let weapon_t = 0
 let shield_t = 0
 let music_on = true
+let shake_t = 0          // screen shake frames remaining
 
 let bullets = []
 let enemies = []
 let meteors = []
 let powerups = []
 let booms = []
+let parts = []           // particles
 
 const W = 320
 const H = 240
 
 // ---------------- helpers ----------------
+
+fn start_game() {
+    px = 152.0
+    pvx = 0.0
+    hp = 3
+    score = 0
+    kills = 0
+    inv = 0
+    cooldown = 0
+    spawn_every = 80
+    meteor_every = 210
+    ufo_every = 540
+    weapon = "blue"
+    weapon_t = 0
+    shield_t = 0
+    shake_t = 0
+    bullets = []
+    enemies = []
+    meteors = []
+    powerups = []
+    booms = []
+    parts = []
+    state = "play"
+    play_music("music.mp3")
+}
 
 fn shoot() {
     if cooldown > 0 {
@@ -87,7 +109,6 @@ fn spawn_enemy() {
     let roll = random(1, 10)
     let e = table{x: random(8, W - 26), y: -24, spd: 0.9, vx: 0.0, hp: 1, pts: 10, img: "enemy.png", ph: random(0, 100)}
     if roll <= 4 {
-        e.img = "enemy.png"
         e.spd = random(10, 14) / 10.0
         e.pts = 10
     }
@@ -148,6 +169,23 @@ fn boom(x, y) {
     booms = push(booms, bfx)
 }
 
+// particle burst: n sparks flying outward
+fn burst(x, y, n, c) {
+    for i in range(0, n, 1) {
+        let ang = random(0, 359) * 3.14159 / 180.0
+        let sp = random(6, 26) / 10.0
+        let p = table{
+            x: x,
+            y: y,
+            vx: math_cos(ang) * sp,
+            vy: math_sin(ang) * sp,
+            t: 0,
+            c: c
+        }
+        parts = push(parts, p)
+    }
+}
+
 fn drop_powerup(x, y) {
     if random(1, 10) > 3 {
         return 0
@@ -167,52 +205,60 @@ fn drop_powerup(x, y) {
     powerups = push(powerups, pu)
 }
 
-fn reset_game() {
-    px = 152.0
-    hp = 3
-    score = 0
-    kills = 0
-    inv = 0
-    over = false
-    cooldown = 0
-    spawn_every = 80
-    meteor_every = 210
-    ufo_every = 540
-    weapon = "blue"
-    weapon_t = 0
-    shield_t = 0
-    bullets = []
-    enemies = []
-    meteors = []
-    powerups = []
-    booms = []
-    play_music("music.mp3")
-}
-
 // ---------------- update ----------------
 
 fn on_update(dt) {
     frame_t = frame_t + 1
 
-    if over {
+    // music toggle works in any state
+    if key_pressed("m") {
+        if music_on {
+            stop_music()
+            music_on = false
+        } else {
+            play_music("music.mp3")
+            music_on = true
+        }
+    }
+
+    // ---- MENU ----
+    if state == "menu" {
+        if key_pressed("enter") || mouse_pressed("left") || key_pressed("space") {
+            start_game()
+        }
+        return 0
+    }
+
+    // ---- PAUSE ----
+    if state == "pause" {
+        if key_pressed("p") {
+            state = "play"
+        }
+        return 0
+    }
+
+    // ---- GAME OVER: wait for restart ----
+    if state == "over" {
         if key_pressed("enter") {
-            reset_game()
+            start_game()
             play_sound("powerup.wav")
         }
         return 0
     }
 
-    // ---- move ----
-    if key_down("right") || key_down("d") {
-        px = px + 3.0
-    }
-    if key_down("left") || key_down("a") {
-        px = px - 3.0
-    }
-    if px < 0 { px = 0 }
-    if px > W - 16 { px = W - 16 }
+    // ================= PLAY =================
 
-    // ---- fire ----
+    // pause
+    if key_pressed("p") {
+        state = "pause"
+        return 0
+    }
+
+    frameTick()
+
+    movePlayer()
+
+    // fire
     if cooldown > 0 {
         cooldown = cooldown - 1
     }
@@ -220,7 +266,7 @@ fn on_update(dt) {
         shoot()
     }
 
-    // ---- timers ----
+    // timers
     if inv > 0 { inv = inv - 1 }
     if weapon_t > 0 {
         weapon_t = weapon_t - 1
@@ -234,28 +280,28 @@ fn on_update(dt) {
             play_sound("shield_down.wav")
         }
     }
-
-    if key_pressed("m") {
-        if music_on {
-            stop_music()
-            music_on = false
-        } else {
-            play_music("music.mp3")
-            music_on = true
-        }
+    if shake_t > 0 {
+        shake_t = shake_t - 1
     }
 
-    // ---- bullets ----
-    let ab = []
-    for b in bullets {
-        b.y = b.y - 6
-        if b.y > -20 {
-            ab = push(ab, b)
-        }
-    }
-    bullets = ab
+    updateBullets()
+    updateSpawns()
+    updateEnemies()
+    updateMeteors()
+    handleHits()
+    updatePowerups()
+    updateFx()
 
-    // ---- spawns ----
+    if hp <= 0 {
+        state = "over"
+        stop_music()
+        play_sound("lose.wav")
+        print("GAME OVER - score ${score} - press ENTER to restart")
+    }
+}
+
+fn frameTick() {
+    // spawns
     if frame_t % spawn_every == 0 {
         spawn_enemy()
         if kills > 0 && kills % 8 == 0 && spawn_every > 25 {
@@ -269,8 +315,46 @@ fn on_update(dt) {
         spawn_ufo()
         ufo_every = 700 + random(0, 300)
     }
+}
 
-    // ---- enemies descend; UFOs strafe across ----
+fn movePlayer() {
+    // glide easing: accelerate toward input, friction when released
+    let acc = 0.0
+    if key_down("right") || key_down("d") {
+        acc = acc + 0.55
+    }
+    if key_down("left") || key_down("a") {
+        acc = acc - 0.55
+    }
+    pvx = pvx + acc
+    if acc == 0.0 {
+        pvx = pvx * 0.78
+    }
+    if pvx > 3.2 { pvx = 3.2 }
+    if pvx < -3.2 { pvx = -3.2 }
+    px = px + pvx
+    if px < 0 { px = 0; pvx = 0 - pvx * 0.4 }
+    if px > W - 16 { px = W - 16; pvx = 0 - pvx * 0.4 }
+}
+
+fn updateBullets() {
+    let ab = []
+    for b in bullets {
+        b.y = b.y - 6
+        if b.y > -20 {
+            ab = push(ab, b)
+        }
+    }
+    bullets = ab
+}
+
+fn updateSpawns() {
+    if frame_t % spawn_every == 0 {
+        spawn_enemy()
+    }
+}
+
+fn updateEnemies() {
     let ae = []
     for e in enemies {
         if e.img == "ufo.png" {
@@ -289,8 +373,9 @@ fn on_update(dt) {
         }
     }
     enemies = ae
+}
 
-    // ---- meteors tumble down ----
+fn updateMeteors() {
     let am = []
     for m in meteors {
         m.y = m.y + m.spd
@@ -302,8 +387,10 @@ fn on_update(dt) {
         am = push(am, m)
     }
     meteors = am
+}
 
-    // ---- bullets vs enemies & meteors ----
+fn handleHits() {
+    // bullets vs enemies & meteors
     for b in bullets {
         for e in enemies {
             if e.hp > 0 {
@@ -314,6 +401,7 @@ fn on_update(dt) {
                         score = score + e.pts
                         kills = kills + 1
                         boom(e.x + 9, e.y + 9)
+                        burst(e.x + 9, e.y + 9, 8, "#e67e22")
                         play_sound("explosion.wav")
                         drop_powerup(e.x + 9, e.y)
                     }
@@ -329,6 +417,7 @@ fn on_update(dt) {
                         score = score + 20
                         kills = kills + 1
                         boom(m.x + 10, m.y + 10)
+                        burst(m.x + 10, m.y + 10, 10, "#a07050")
                         play_sound("explosion.wav")
                     }
                 }
@@ -336,7 +425,6 @@ fn on_update(dt) {
         }
     }
 
-    // remove dead things
     let se = []
     for e in enemies {
         if e.hp > 0 {
@@ -352,7 +440,7 @@ fn on_update(dt) {
     }
     meteors = sm
 
-    // ---- enemy/meteor reach your line or touch you ----
+    // reach your line or touch you
     let keep_e = []
     for e in enemies {
         let gone = false
@@ -367,9 +455,11 @@ fn on_update(dt) {
         if rects_overlap(px + 4, 206, 8, 12, e.x + 1, e.y + 1, 16, 16) {
             gone = true
             boom(e.x + 9, e.y + 9)
+            burst(e.x + 9, e.y + 9, 8, "#e74c3c")
             if shield_t == 0 {
                 hp = hp - 1
                 inv = 60
+                shake_t = 14
                 play_sound("hurt.wav")
             }
         }
@@ -388,10 +478,12 @@ fn on_update(dt) {
         if rects_overlap(px + 4, 206, 8, 12, m.x + 1, m.y + 1, 18, 18) {
             gone = true
             boom(m.x + 10, m.y + 10)
+            burst(m.x + 10, m.y + 10, 10, "#a07050")
             play_sound("explosion.wav")
             if shield_t == 0 {
                 hp = hp - 1
                 inv = 60
+                shake_t = 14
                 play_sound("hurt.wav")
             }
         }
@@ -400,14 +492,16 @@ fn on_update(dt) {
         }
     }
     meteors = keep_m
+}
 
-    // ---- powerups fall; catch them ----
+fn updatePowerups() {
     let ap = []
     for pu in powerups {
         pu.y = pu.y + 1.2
         let caught = rects_overlap(px + 1, 203, 14, 18, pu.x - 5, pu.y - 5, 10, 10)
         if caught {
             play_sound("powerup.wav")
+            burst(pu.x, pu.y, 6, "#ff6b81")
             if pu.kind == "rapid" {
                 weapon = "green"
                 weapon_t = 600
@@ -432,8 +526,9 @@ fn on_update(dt) {
         }
     }
     powerups = ap
+}
 
-    // ---- explosions animate ----
+fn updateFx() {
     let abo = []
     for bx in booms {
         bx.t = bx.t + 1
@@ -443,30 +538,39 @@ fn on_update(dt) {
     }
     booms = abo
 
-    if hp <= 0 {
-        over = true
-        stop_music()
-        play_sound("lose.wav")
-        print("GAME OVER - score ${score} - press ENTER to restart")
+    let apt = []
+    for p in parts {
+        p.x = p.x + p.vx
+        p.y = p.y + p.vy
+        p.t = p.t + 1
+        if p.t < 20 {
+            apt = push(apt, p)
+        }
     }
+    parts = apt
 }
 
 // ---------------- draw ----------------
 
 fn on_draw() {
+    // screen shake: world layer drawn through a jittering camera
+    set_camera(math_sin(frame_t * 93.0) * shake_t * 0.6, math_cos(frame_t * 71.0) * shake_t * 0.6)
+
     draw_sprite("background.png", 0, 0)
 
-    // meteors
+    if state == "menu" {
+        menuDraw()
+        return 0
+    }
+
     for m in meteors {
         draw_sprite_ex("meteor.png", m.x + 10, m.y + 10, 0.45, m.rot)
     }
 
-    // enemies face down, clean
     for e in enemies {
         draw_sprite_ex(e.img, e.x + 9, e.y + 9, 0.22, 180)
     }
 
-    // powerups as real sprites
     for pu in powerups {
         let pimg = "pu_rapid.png"
         if pu.kind == "twin" {
@@ -478,15 +582,14 @@ fn on_draw() {
         if pu.kind == "heart" {
             pimg = "pu_heart.png"
         }
-        draw_sprite_ex(pimg, pu.x, pu.y, 0.45, 0)
+        // gentle bob
+        draw_sprite_ex(pimg, pu.x, pu.y + math_sin(frame_t / 9.0 + pu.x) * 2.0, 0.45, 0)
     }
 
-    // bullets with their own colors
     for b in bullets {
         draw_sprite_ex(b.img, b.x, b.y, 0.3, 0)
     }
 
-    // player: damage states by hp, thruster while moving, shield bubble
     if inv == 0 || frame_t % 8 < 5 {
         draw_sprite_ex("player.png", px + 8, 212, 0.22, 0)
     }
@@ -507,7 +610,15 @@ fn on_draw() {
         }
     }
 
-    // ------- HUD -------
+    // particles (shrink as they die)
+    for p in parts {
+        let r = (20 - p.t) / 7
+        draw_circle(p.x, p.y, r + 1, p.c)
+    }
+
+    // ------- HUD: back to steady camera -------
+    set_camera(0, 0)
+
     for i in range(0, hp, 1) {
         draw_sprite_ex("life_icon.png", 266 + i * 17, 13, 0.42, 0)
     }
@@ -528,7 +639,15 @@ fn on_draw() {
         draw_text(l, wx - text_width(l), 40, "#3498db")
     }
 
-    if over {
+    if state == "pause" {
+        draw_rect(85, 100, 150, 44, "#000000")
+        let l = "PAUSED"
+        draw_text(l, 160 - text_width(l) / 2, 116, "#ffffff")
+        let l2 = "press P to resume"
+        draw_text(l2, 160 - text_width(l2) / 2, 132, "#95a5a6")
+    }
+
+    if state == "over" {
         draw_rect(55, 88, 210, 72, "#000000")
         let l1 = "GAME OVER"
         let l2 = "final score: ${score}"
@@ -536,5 +655,21 @@ fn on_draw() {
         draw_text(l1, 160 - text_width(l1) / 2, 104, "#e74c3c")
         draw_text(l2, 160 - text_width(l2) / 2, 124, "#ffffff")
         draw_text(l3, 160 - text_width(l3) / 2, 144, "#95a5a6")
+    }
+}
+
+fn menuDraw() {
+    let t1 = "GALAGA DEFENSE"
+    let t2 = "a logos2d game"
+    let t3 = "PRESS ENTER TO START"
+    draw_text(t1, 160 - text_width(t1) / 2, 70, "#ffffff")
+    draw_text(t2, 160 - text_width(t2) / 2, 86, "#7fdbff")
+
+    draw_text("A/D or arrows  move", 96, 120, "#aaaaaa")
+    draw_text("SPACE  fire", 118, 134, "#aaaaaa")
+    draw_text("P pause   M music", 104, 148, "#aaaaaa")
+
+    if frame_t % 60 < 40 {
+        draw_text(t3, 160 - text_width(t3) / 2, 186, "#f1c40f")
     }
 }

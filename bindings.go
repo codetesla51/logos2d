@@ -16,6 +16,7 @@ func parseKey(name string) (ebiten.Key, bool) {
 		"space": ebiten.KeySpace, "enter": ebiten.KeyEnter, "escape": ebiten.KeyEscape,
 		"tab": ebiten.KeyTab, "shift": ebiten.KeyShift, "ctrl": ebiten.KeyControl,
 		"w": ebiten.KeyW, "a": ebiten.KeyA, "s": ebiten.KeyS, "d": ebiten.KeyD,
+		"m": ebiten.KeyM, "p": ebiten.KeyP,
 	}
 	k, ok := keys[name]
 	return k, ok

@@ -111,7 +111,9 @@ func toI(o logos.Object) int64 {
 
 // loadFont tries common system font locations; returns nil if none found.
 func loadFont() font.Face {
+	// project-local arcade font wins if present
 	candidates := []string{
+		"kenvector_future.ttf",
 		"/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
 		"/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
 		"/usr/share/fonts/TTF/DejaVuSans.ttf",

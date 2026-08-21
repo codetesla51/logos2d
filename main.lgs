@@ -1,31 +1,50 @@
 // ============================================================
-// GALAGA-STYLE DEFENSE — logos2d demo game
+// GALAGA DEFENSE — the full build
 // Move: A/D or arrows   Fire: hold SPACE   Music: M   Quit: ESC
-// Enemies rain from the top — don't let them reach the bottom!
+// Powerups drop from kills:
+//   green capsule = RAPID laser    red capsule = TWIN laser
+//   shield bubble = 6s invulnerability
+// Meteors tank 2 hits. Black enemies tank 3. Don't let anything past you!
 // ============================================================
 
 fn on_load() {
-    preload_sprite("stars.png")
+    preload_sprite("background.png")
     preload_sprite("player.png")
     preload_sprite("enemy.png")
+    preload_sprite("enemy_black.png")
+    preload_sprite("enemy_blue.png")
+    preload_sprite("enemy_green.png")
+    preload_sprite("meteor.png")
     preload_sprite("bullet.png")
+    preload_sprite("laser_green.png")
+    preload_sprite("laser_red.png")
+    preload_sprite("flame.png")
+    preload_sprite("shield.png")
     print("game loaded")
 }
 
 // ---------------- state ----------------
 
-let px = 152.0        // player x (ship is 16 wide, screen 320)
+let px = 152.0
 let hp = 3
 let score = 0
 let kills = 0
-let inv = 0           // invulnerability frames
+let inv = 0
 let over = false
 let frame_t = 0
-let cooldown = 0      // fire rate limiter
-let spawn_every = 80  // ticks between spawns (shrinks)
+let cooldown = 0
+let spawn_every = 80
+let meteor_every = 210
+
+let weapon = "blue"      // blue | green | red
+let weapon_t = 0         // ticks left on picked-up weapon (0 = forever default)
+let shield_t = 0         // shield active ticks
 
 let bullets = []
 let enemies = []
+let meteors = []
+let powerups = []
+let booms = []           // explosion effects
 
 const W = 320
 const H = 240
@@ -36,24 +55,84 @@ fn shoot() {
     if cooldown > 0 {
         return 0
     }
-    let b = table{x: px + 8, y: 200.0}
-    bullets = push(bullets, b)
+    let b1 = table{x: px + 8, y: 200.0, img: "bullet.png"}
+    if weapon == "green" {
+        b1.img = "laser_green.png"
+        cooldown = 5
+    }
+    if weapon == "red" {
+        b1.img = "laser_red.png"
+        let b2 = table{x: px + 2, y: 200.0, img: "laser_red.png"}
+        bullets = push(bullets, b2)
+        cooldown = 9
+    }
+    if weapon == "blue" {
+        cooldown = 8
+    }
+    bullets = push(bullets, b1)
     play_sound("shoot.wav")
-    cooldown = 8
 }
 
 fn spawn_enemy() {
-    let s = random(4, 11)
-    let vx = random(-3, 3)
-    let e = table{
-        x: random(8, W - 24),
-        y: -20,
-        spd: s / 10.0,
-        vx: vx / 10.0,
-        hp: 1,
-        ph: random(0, 100)
+    let roll = random(1, 10)
+    let e = table{x: random(8, W - 26), y: -24, spd: 0.9, vx: 0.0, hp: 1, pts: 10, img: "enemy.png", ph: random(0, 100)}
+    if roll <= 4 {
+        e.img = "enemy.png"          // red diver
+        e.spd = random(10, 14) / 10.0
+        e.pts = 10
+    }
+    if roll >= 5 && roll <= 6 {
+        e.img = "enemy_blue.png"     // wobbler
+        e.spd = random(7, 9) / 10.0
+        e.pts = 15
+    }
+    if roll == 7 || roll == 8 {
+        e.img = "enemy_green.png"    // drifter
+        e.spd = random(5, 7) / 10.0
+        e.vx = random(-15, 15) / 10.0
+        e.pts = 15
+    }
+    if roll >= 9 {
+        e.img = "enemy_black.png"    // tank
+        e.spd = random(3, 5) / 10.0
+        e.hp = 3
+        e.pts = 40
     }
     enemies = push(enemies, e)
+}
+
+fn spawn_meteor() {
+    let m = table{
+        x: random(8, W - 30),
+        y: -30,
+        spd: random(3, 6) / 10.0,
+        vx: random(-8, 8) / 10.0,
+        rot: random(0, 359),
+        vr: random(-3, 3),
+        hp: 2
+    }
+    meteors = push(meteors, m)
+}
+
+fn boom(x, y) {
+    let bfx = table{x: x, y: y, t: 0}
+    booms = push(booms, bfx)
+}
+
+fn drop_powerup(x, y) {
+    if random(1, 10) > 3 {
+        return 0
+    }
+    let roll = random(1, 3)
+    let kind = "rapid"
+    if roll == 2 {
+        kind = "twin"
+    }
+    if roll == 3 {
+        kind = "shield"
+    }
+    let pu = table{x: x, y: y, kind: kind}
+    powerups = push(powerups, pu)
 }
 
 fn reset_game() {
@@ -65,8 +144,15 @@ fn reset_game() {
     over = false
     cooldown = 0
     spawn_every = 80
+    meteor_every = 210
+    weapon = "blue"
+    weapon_t = 0
+    shield_t = 0
     bullets = []
     enemies = []
+    meteors = []
+    powerups = []
+    booms = []
 }
 
 // ---------------- update ----------------
@@ -77,11 +163,12 @@ fn on_update(dt) {
     if over {
         if key_pressed("enter") {
             reset_game()
+            play_sound("powerup.wav")
         }
         return 0
     }
 
-    // ---- move left/right ----
+    // ---- move ----
     if key_down("right") || key_down("d") {
         px = px + 3.0
     }
@@ -91,7 +178,7 @@ fn on_update(dt) {
     if px < 0 { px = 0 }
     if px > W - 16 { px = W - 16 }
 
-    // ---- continuous fire while holding space (or clicking) ----
+    // ---- fire ----
     if cooldown > 0 {
         cooldown = cooldown - 1
     }
@@ -99,90 +186,204 @@ fn on_update(dt) {
         shoot()
     }
 
-    // ---- music toggle ----
-    if key_pressed("m") {
-        play_music("music.wav")
+    // ---- timers ----
+    if inv > 0 { inv = inv - 1 }
+    if weapon_t > 0 {
+        weapon_t = weapon_t - 1
+        if weapon_t == 0 && weapon != "blue" {
+            weapon = "blue"
+        }
+    }
+    if shield_t > 0 {
+        shield_t = shield_t - 1
+        if shield_t == 0 {
+            play_sound("shield_down.wav")
+        }
     }
 
-    // ---- bullets fly straight up ----
-    let alive_bullets = []
+    if key_pressed("m") {
+        play_music("music.mp3")
+    }
+
+    // ---- bullets ----
+    let ab = []
     for b in bullets {
         b.y = b.y - 6
         if b.y > -20 {
-            alive_bullets = push(alive_bullets, b)
+            ab = push(ab, b)
         }
     }
-    bullets = alive_bullets
+    bullets = ab
 
-    // ---- spawning speeds up as you kill ----
-    if frame_t % spawn_every == 0 && !over {
+    // ---- spawns ----
+    if frame_t % spawn_every == 0 {
         spawn_enemy()
         if kills > 0 && kills % 8 == 0 && spawn_every > 25 {
             spawn_every = spawn_every - 5
         }
     }
+    if frame_t % meteor_every == 0 {
+        spawn_meteor()
+    }
 
     // ---- enemies descend ----
-    let alive_enemies = []
+    let ae = []
     for e in enemies {
         e.y = e.y + e.spd
-        e.x = e.x + math_sin((frame_t + e.ph) / 18.0) * 0.4 + e.vx
+        e.x = e.x + math_sin((frame_t + e.ph) / 16.0) * 0.5 + e.vx
         if e.x < 0 { e.x = 0 }
-        if e.x > W - 16 { e.x = W - 16 }
-        alive_enemies = push(alive_enemies, e)
+        if e.x > W - 18 { e.x = W - 18 }
+        ae = push(ae, e)
     }
-    enemies = alive_enemies
+    enemies = ae
 
-    // ---- bullet hits enemy (one shot one kill) ----
+    // ---- meteors tumble down ----
+    let am = []
+    for m in meteors {
+        m.y = m.y + m.spd
+        m.x = m.x + m.vx
+        m.rot = m.rot + m.vr
+        if m.x < -10 || m.x > W + 10 {
+            m.vx = 0 - m.vx
+        }
+        am = push(am, m)
+    }
+    meteors = am
+
+    // ---- bullets vs enemies & meteors ----
     for b in bullets {
         for e in enemies {
             if e.hp > 0 {
-                if rects_overlap(b.x - 2, b.y - 8, 4, 14, e.x + 3, e.y + 3, 10, 10) {
+                if rects_overlap(b.x - 2, b.y - 8, 4, 14, e.x + 3, e.y + 3, 12, 12) {
                     e.hp = e.hp - 1
                     b.y = -100
-                    score = score + 10
-                    kills = kills + 1
-                    play_sound("hit.wav")
+                    if e.hp <= 0 {
+                        score = score + e.pts
+                        kills = kills + 1
+                        boom(e.x + 9, e.y + 9)
+                        play_sound("explosion.wav")
+                        drop_powerup(e.x + 9, e.y)
+                    }
+                }
+            }
+        }
+        for m in meteors {
+            if m.hp > 0 {
+                if rects_overlap(b.x - 2, b.y - 8, 4, 14, m.x, m.y, 20, 20) {
+                    m.hp = m.hp - 1
+                    b.y = -100
+                    if m.hp <= 0 {
+                        score = score + 20
+                        kills = kills + 1
+                        boom(m.x + 10, m.y + 10)
+                        play_sound("explosion.wav")
+                    }
                 }
             }
         }
     }
-    let survivors = []
+
+    // remove dead things
+    let se = []
     for e in enemies {
         if e.hp > 0 {
-            survivors = push(survivors, e)
+            se = push(se, e)
         }
     }
-    enemies = survivors
-
-    // ---- enemy reaches your line OR touches you -> hurt ----
-    if inv > 0 {
-        inv = inv - 1
+    enemies = se
+    let sm = []
+    for m in meteors {
+        if m.hp > 0 {
+            sm = push(sm, m)
+        }
     }
-    let still_alive = []
+    meteors = sm
+
+    // ---- enemy/meteor reach your line or touch you ----
+    let keep_e = []
     for e in enemies {
-        let dead = false
-        if e.y > H - 40 {
-            dead = true
+        let gone = false
+        if e.y > H - 34 {
+            gone = true
             score = score - 5
         }
-        if inv == 0 {
-            if rects_overlap(px, 204, 16, 16, e.x + 3, e.y + 3, 10, 10) {
-                dead = true
+        if rects_overlap(px, 204, 16, 16, e.x + 3, e.y + 3, 12, 12) {
+            gone = true
+            boom(e.x + 9, e.y + 9)
+            if shield_t == 0 {
                 hp = hp - 1
                 inv = 60
                 play_sound("hurt.wav")
             }
         }
-        if !dead {
-            still_alive = push(still_alive, e)
+        if !gone {
+            keep_e = push(keep_e, e)
         }
     }
-    enemies = still_alive
+    enemies = keep_e
+
+    let keep_m = []
+    for m in meteors {
+        let gone = false
+        if m.y > H - 20 {
+            gone = true
+        }
+        if rects_overlap(px, 204, 16, 16, m.x, m.y, 20, 20) {
+            gone = true
+            boom(m.x + 10, m.y + 10)
+            play_sound("explosion.wav")
+            if shield_t == 0 {
+                hp = hp - 1
+                inv = 60
+                play_sound("hurt.wav")
+            }
+        }
+        if !gone {
+            keep_m = push(keep_m, m)
+        }
+    }
+    meteors = keep_m
+
+    // ---- powerups fall; catch them ----
+    let ap = []
+    for pu in powerups {
+        pu.y = pu.y + 1.2
+        let caught = rects_overlap(px, 202, 16, 20, pu.x - 6, pu.y - 6, 12, 12)
+        if caught {
+            play_sound("powerup.wav")
+            if pu.kind == "rapid" {
+                weapon = "green"
+                weapon_t = 600
+            }
+            if pu.kind == "twin" {
+                weapon = "red"
+                weapon_t = 600
+            }
+            if pu.kind == "shield" {
+                shield_t = 360
+                play_sound("shield_up.wav")
+            }
+        }
+        if pu.y < H - 24 && !caught {
+            ap = push(ap, pu)
+        }
+    }
+    powerups = ap
+
+    // ---- explosions animate ----
+    let abo = []
+    for bx in booms {
+        bx.t = bx.t + 1
+        if bx.t < 16 {
+            abo = push(abo, bx)
+        }
+    }
+    booms = abo
 
     if hp <= 0 {
         over = true
         stop_music()
+        play_sound("lose.wav")
         print("GAME OVER - score ${score} - press ENTER to restart")
     }
 }
@@ -190,21 +391,59 @@ fn on_update(dt) {
 // ---------------- draw ----------------
 
 fn on_draw() {
-    draw_sprite("stars.png", 0, 0)
+    draw_sprite("background.png", 0, 0)
 
-    // enemies face down (sprites are drawn pointing up natively)
+    // meteors
+    for m in meteors {
+        draw_sprite_ex("meteor.png", m.x + 10, m.y + 10, 0.45, m.rot)
+    }
+
+    // enemies face down
     for e in enemies {
-        draw_sprite_ex("enemy.png", e.x + 9, e.y + 9, 0.22, 180)
+        draw_sprite_ex(e.img, e.x + 9, e.y + 9, 0.22, 180)
     }
 
-    // bullets (vertical bolt, flies up)
+    // powerups: colored capsules
+    for pu in powerups {
+        let c = "#2ecc71"
+        if pu.kind == "twin" {
+            c = "#e74c3c"
+        }
+        if pu.kind == "shield" {
+            c = "#3498db"
+        }
+        draw_circle(pu.x, pu.y, 5, c)
+        draw_circle(pu.x, pu.y, 2, "#ffffff")
+    }
+
+    // bullets with their own colors
     for b in bullets {
-        draw_sprite_ex("bullet.png", b.x, b.y, 0.3, 0)
+        draw_sprite_ex(b.img, b.x, b.y, 0.3, 0)
     }
 
-    // player ship at the bottom, blink while invulnerable
+    // player + thruster + shield
+    let moving = key_down("left") || key_down("right") || key_down("a") || key_down("d")
+    if moving {
+        draw_sprite_frame("flame.png", px + 4, 224, 16, 40, frame_t / 3 % 10)
+    }
     if inv == 0 || frame_t % 8 < 5 {
         draw_sprite_ex("player.png", px + 8, 212, 0.22, 0)
+    }
+    if cooldown > 5 {
+        draw_circle(px + 8, 200, 2, "#f1c40f")
+    }
+    if shield_t > 0 {
+        draw_sprite_ex("shield.png", px + 8, 212, 0.22, 0)
+    }
+
+    // explosion rings
+    for bx in booms {
+        let r = bx.t
+        draw_circle(bx.x, bx.y, r, "#e67e22")
+        draw_circle(bx.x, bx.y, r / 2, "#f1c40f")
+        if bx.t > 8 {
+            draw_circle(bx.x, bx.y, r / 3, "#ffffff")
+        }
     }
 
     // ------- HUD -------
@@ -214,6 +453,18 @@ fn on_draw() {
     }
     draw_text("SCORE ${score}", 8, 6, "#ffffff")
     draw_text("kills: ${kills}", 8, 18, "#95a5a6")
+
+    let wl = "gun: standard"
+    if weapon == "green" {
+        wl = "gun: RAPID"
+    }
+    if weapon == "red" {
+        wl = "gun: TWIN"
+    }
+    draw_text(wl, 8, H - 14, "#7fdbff")
+    if shield_t > 0 {
+        draw_text("SHIELD ${shield_t / 60}", 110, H - 14, "#3498db")
+    }
 
     if over {
         draw_rect(70, 90, 180, 60, "#000000")

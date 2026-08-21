@@ -6,6 +6,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/text"
 	"math"
 	"math/rand/v2"
+	"os"
 )
 
 // parseKey maps a Logos string to an Ebiten key.
@@ -20,6 +21,18 @@ func parseKey(name string) (ebiten.Key, bool) {
 	}
 	k, ok := keys[name]
 	return k, ok
+}
+
+// cliFlag reports whether "-name" was passed on the command line,
+// letting scripts read launch options (e.g. ./logos2d demo/main.lgs -auto).
+func cliFlag(name string) bool {
+	want := "-" + name
+	for _, a := range os.Args[1:] {
+		if a == want {
+			return true
+		}
+	}
+	return false
 }
 
 // parseMouseButton maps "left"/"right"/"middle" to an Ebiten mouse button.
@@ -112,6 +125,34 @@ func registerBindings(vm *logos.VM, g *Game) {
 	vm.Register("set_title", func(args ...logos.Object) logos.Object {
 		ebiten.SetWindowTitle(args[0].(*logos.String).Value)
 		return &logos.Null{}
+	})
+
+	vm.Register("len", func(args ...logos.Object) logos.Object {
+		switch v := args[0].(type) {
+		case *logos.Array:
+			return &logos.Integer{Value: int64(len(v.Elements))}
+		case *logos.String:
+			return &logos.Integer{Value: int64(len(v.Value))}
+		case *logos.Table:
+			return &logos.Integer{Value: int64(len(v.Pairs))}
+		}
+		return &logos.Integer{Value: 0}
+	})
+
+	vm.Register("abs", func(args ...logos.Object) logos.Object {
+		v := toF(args[0])
+		if v < 0 {
+			v = -v
+		}
+		return &logos.Float{Value: v}
+	})
+
+	vm.Register("cli_flag", func(args ...logos.Object) logos.Object {
+		name, ok := args[0].(*logos.String)
+		if !ok {
+			return &logos.Bool{Value: false}
+		}
+		return &logos.Bool{Value: cliFlag(name.Value)}
 	})
 
 	vm.Register("quit", func(args ...logos.Object) logos.Object {

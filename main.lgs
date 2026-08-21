@@ -451,8 +451,8 @@ fn on_draw() {
     for i in range(0, hp, 1) {
         draw_circle(hx + i * 14 + 5, 12, 5, "#e74c3c")
     }
-    draw_text("SCORE ${score}", 8, 6, "#ffffff")
-    draw_text("kills: ${kills}", 8, 18, "#95a5a6")
+    draw_text("SCORE ${score}", 8, 24, "#ffffff")
+    draw_text("kills: ${kills}", 8, 38, "#aaaaaa")
 
     let wl = "gun: standard"
     if weapon == "green" {
@@ -467,9 +467,12 @@ fn on_draw() {
     }
 
     if over {
-        draw_rect(70, 90, 180, 60, "#000000")
-        draw_text("GAME OVER", 118, 108, "#e74c3c")
-        draw_text("final score: ${score}", 105, 124, "#ffffff")
-        draw_text("press ENTER to restart", 92, 138, "#95a5a6")
+        draw_rect(55, 88, 210, 72, "#000000")
+        let l1 = "GAME OVER"
+        let l2 = "final score: ${score}"
+        let l3 = "press ENTER to restart"
+        draw_text(l1, 160 - text_width(l1) / 2, 104, "#e74c3c")
+        draw_text(l2, 160 - text_width(l2) / 2, 124, "#ffffff")
+        draw_text(l3, 160 - text_width(l3) / 2, 144, "#95a5a6")
     }
 }

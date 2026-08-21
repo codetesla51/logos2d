@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/codetesla51/logos/logos"
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/text"
 	"math"
 	"math/rand/v2"
 )
@@ -180,6 +181,14 @@ func registerBindings(vm *logos.VM, g *Game) {
 
 	vm.Register("math_cos", func(args ...logos.Object) logos.Object {
 		return &logos.Float{Value: math.Cos(toF(args[0]))}
+	})
+
+	vm.Register("text_width", func(args ...logos.Object) logos.Object {
+		// pixel width of a string in the current font (for centering)
+		if g.face == nil {
+			return &logos.Integer{Value: 0}
+		}
+		return &logos.Integer{Value: int64(text.BoundString(g.face, args[0].(*logos.String).Value).Dx())}
 	})
 
 	vm.Register("atan2", func(args ...logos.Object) logos.Object {

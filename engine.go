@@ -1,15 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"image"
 	"image/color"
+	"io"
 	"math"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/codetesla51/logos/logos"
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/audio"
+	"github.com/hajimehoshi/ebiten/v2/audio/mp3"
+	"github.com/hajimehoshi/ebiten/v2/audio/wav"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/text"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -36,14 +43,19 @@ type drawCmd struct {
 }
 
 type Game struct {
-	vm                          *logos.VM
-	cmds                        []drawCmd
-	sprites                     map[string]*ebiten.Image
-	failed                      map[string]bool // sprite paths that failed to load (warn once)
-	face                        font.Face
-	keysCurr, keysPrev          map[ebiten.Key]bool
-	mouseCurr, mousePrev        map[ebiten.MouseButton]bool
-	quitRequested               bool
+	vm                   *logos.VM
+	cmds                 []drawCmd
+	sprites              map[string]*ebiten.Image
+	failed               map[string]bool // sprite paths that failed to load (warn once)
+	face                 font.Face
+	keysCurr, keysPrev   map[ebiten.Key]bool
+	mouseCurr, mousePrev map[ebiten.MouseButton]bool
+	quitRequested        bool
+	camX, camY           float64
+	audioCtx             *audio.Context
+	sfxPCM               map[string][]byte // decoded sound effects by path
+	musicPlayer          *audio.Player
+	scriptMod            time.Time // main.lgs mtime for hot reload
 }
 
 func newGame(vm *logos.VM) *Game {
@@ -56,6 +68,11 @@ func newGame(vm *logos.VM) *Game {
 		keysPrev:  map[ebiten.Key]bool{},
 		mouseCurr: map[ebiten.MouseButton]bool{},
 		mousePrev: map[ebiten.MouseButton]bool{},
+		audioCtx:  audio.NewContext(44100),
+		sfxPCM:    map[string][]byte{},
+	}
+	if st, err := os.Stat("main.lgs"); err == nil {
+		g.scriptMod = st.ModTime()
 	}
 	if g.face == nil {
 		fmt.Println("warning: no system font found, draw_text will be skipped")
@@ -173,8 +190,100 @@ func (g *Game) mousePressed(b ebiten.MouseButton) bool {
 	return g.mouseCurr[b] && !g.mousePrev[b]
 }
 
+// loadAudio decodes a .wav/.mp3 file into raw PCM bytes, cached by path.
+func (g *Game) loadAudio(path string) ([]byte, error) {
+	if pcm, ok := g.sfxPCM[path]; ok {
+		return pcm, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var pcm []byte
+	switch {
+	case strings.HasSuffix(path, ".wav"):
+		s, derr := wav.DecodeWithSampleRate(g.audioCtx.SampleRate(), f)
+		if derr != nil {
+			return nil, derr
+		}
+		pcm, err = io.ReadAll(s)
+	case strings.HasSuffix(path, ".mp3"):
+		s, derr := mp3.DecodeWithSampleRate(g.audioCtx.SampleRate(), f)
+		if derr != nil {
+			return nil, derr
+		}
+		pcm, err = io.ReadAll(s)
+	default:
+		return nil, fmt.Errorf("unsupported audio format: %s", path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	g.sfxPCM[path] = pcm
+	return pcm, nil
+}
+
+func (g *Game) playSound(path string) {
+	pcm, err := g.loadAudio(path)
+	if err != nil {
+		fmt.Println("play_sound:", err)
+		return
+	}
+	p := g.audioCtx.NewPlayerFromBytes(pcm)
+	p.Play() // finished players are garbage-collected by the audio context
+}
+
+func (g *Game) playMusic(path string) {
+	pcm, err := g.loadAudio(path)
+	if err != nil {
+		fmt.Println("play_music:", err)
+		return
+	}
+	loop := audio.NewInfiniteLoop(bytes.NewReader(pcm), int64(len(pcm)))
+	p, err := g.audioCtx.NewPlayer(loop)
+	if err != nil {
+		fmt.Println("play_music:", err)
+		return
+	}
+	if g.musicPlayer != nil {
+		g.musicPlayer.Close()
+	}
+	p.Play()
+	g.musicPlayer = p
+}
+
+func (g *Game) stopMusic() {
+	if g.musicPlayer != nil {
+		g.musicPlayer.Close()
+		g.musicPlayer = nil
+	}
+}
+
+// checkHotReload watches main.lgs and re-runs the script when it changes.
+// Parse errors keep the old code running until the next valid save.
+func (g *Game) checkHotReload() {
+	st, err := os.Stat("main.lgs")
+	if err != nil || !st.ModTime().After(g.scriptMod) {
+		return
+	}
+	g.scriptMod = st.ModTime()
+	source, err := os.ReadFile("main.lgs")
+	if err != nil {
+		return
+	}
+	if err := g.vm.Run(string(source)); err != nil {
+		fmt.Println("[hot-reload] error (keeping old code):", err)
+		return
+	}
+	g.vm.Call("on_load")
+	fmt.Println("[hot-reload] main.lgs reloaded")
+}
+
 func (g *Game) Update() error {
 	g.pollInput()
+	g.checkHotReload()
 	callScript(g.vm, "on_update", 1.0/float64(ebiten.TPS()))
 	if g.quitRequested {
 		return ebiten.Termination // clean shutdown from script's quit()
@@ -187,6 +296,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	g.vm.Call("on_draw")
 
 	for _, c := range g.cmds {
+		// world-space: every command is drawn relative to the camera
+		wx := c.x - g.camX
+		wy := c.y - g.camY
+
 		// sprites carry no color; default to white rather than parsing ""
 		clr := color.RGBA{R: 255, G: 255, B: 255, A: 255}
 		if len(c.color) >= 6 {
@@ -194,23 +307,23 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 		switch c.kind {
 		case "rect":
-			vector.DrawFilledRect(screen, float32(c.x), float32(c.y), float32(c.w), float32(c.h), clr, false)
+			vector.DrawFilledRect(screen, float32(wx), float32(wy), float32(c.w), float32(c.h), clr, false)
 		case "circle":
-			vector.DrawFilledCircle(screen, float32(c.x), float32(c.y), float32(c.radius), clr, false)
+			vector.DrawFilledCircle(screen, float32(wx), float32(wy), float32(c.radius), clr, false)
 		case "line":
-			vector.StrokeLine(screen, float32(c.x), float32(c.y), float32(c.x2), float32(c.y2), float32(c.thickness), clr, false)
+			vector.StrokeLine(screen, float32(wx), float32(wy), float32(c.x2-g.camX), float32(c.y2-g.camY), float32(c.thickness), clr, false)
 		case "text":
 			if g.face == nil {
 				continue
 			}
-			text.Draw(screen, c.str, g.face, int(c.x), int(c.y), clr)
+			text.Draw(screen, c.str, g.face, int(wx), int(wy), clr)
 		case "sprite":
 			img := g.sprite(c.path)
 			if img == nil {
 				continue
 			}
 			opts := &ebiten.DrawImageOptions{}
-			opts.GeoM.Translate(c.x, c.y)
+			opts.GeoM.Translate(wx, wy)
 			screen.DrawImage(img, opts)
 		case "sprite_ex":
 			img := g.sprite(c.path)
@@ -224,8 +337,25 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			opts.GeoM.Translate(-w/2, -h/2)
 			opts.GeoM.Scale(c.scale, c.scale)
 			opts.GeoM.Rotate(c.rotation * math.Pi / 180) // degrees -> radians
-			opts.GeoM.Translate(c.x, c.y)
+			opts.GeoM.Translate(wx, wy)
 			screen.DrawImage(img, opts)
+		case "sprite_frame":
+			img := g.sprite(c.path)
+			if img == nil {
+				continue
+			}
+			fw := int(c.w) // frame width; sheet is a horizontal strip
+			fh := int(c.h)
+			idx := int(c.radius) // reuse field as frame index
+			cols := img.Bounds().Dx() / fw
+			if cols < 1 {
+				cols = 1
+			}
+			col := ((idx % cols) + cols) % cols // wraps negative indexes too
+			sub := img.SubImage(image.Rect(col*fw, 0, col*fw+fw, fh)).(*ebiten.Image)
+			opts := &ebiten.DrawImageOptions{}
+			opts.GeoM.Translate(wx, wy)
+			screen.DrawImage(sub, opts)
 		}
 	}
 }

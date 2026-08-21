@@ -4,6 +4,7 @@ import (
 	"github.com/codetesla51/logos/logos"
 	"github.com/hajimehoshi/ebiten/v2"
 	"math"
+	"math/rand/v2"
 )
 
 // parseKey maps a Logos string to an Ebiten key.
@@ -107,6 +108,61 @@ func registerBindings(vm *logos.VM, g *Game) {
 
 	vm.Register("quit", func(args ...logos.Object) logos.Object {
 		g.quitRequested = true // Update() turns this into ebiten.Termination
+		return &logos.Null{}
+	})
+
+	vm.Register("set_camera", func(args ...logos.Object) logos.Object {
+		g.camX = toF(args[0])
+		g.camY = toF(args[1])
+		return &logos.Null{}
+	})
+
+	vm.Register("camera_x", func(args ...logos.Object) logos.Object {
+		return &logos.Integer{Value: int64(g.camX)}
+	})
+
+	vm.Register("camera_y", func(args ...logos.Object) logos.Object {
+		return &logos.Integer{Value: int64(g.camY)}
+	})
+
+	vm.Register("random", func(args ...logos.Object) logos.Object {
+		minV := int64(toF(args[0]))
+		maxV := int64(toF(args[1]))
+		if maxV < minV {
+			minV, maxV = maxV, minV
+		}
+		return &logos.Integer{Value: minV + rand.Int64N(maxV-minV+1)}
+	})
+
+	vm.Register("play_sound", func(args ...logos.Object) logos.Object {
+		g.playSound(args[0].(*logos.String).Value)
+		return &logos.Null{}
+	})
+
+	vm.Register("play_music", func(args ...logos.Object) logos.Object {
+		g.playMusic(args[0].(*logos.String).Value)
+		return &logos.Null{}
+	})
+
+	vm.Register("stop_music", func(args ...logos.Object) logos.Object {
+		g.stopMusic()
+		return &logos.Null{}
+	})
+
+	// preload_sprite loads and decodes an image NOW instead of on first draw.
+	vm.Register("preload_sprite", func(args ...logos.Object) logos.Object {
+		return &logos.Bool{Value: g.sprite(args[0].(*logos.String).Value) != nil}
+	})
+
+	// draw_sprite_frame draws frame `index` from a horizontal-strip sheet.
+	vm.Register("draw_sprite_frame", func(args ...logos.Object) logos.Object {
+		g.cmds = append(g.cmds, drawCmd{
+			kind: "sprite_frame",
+			path: args[0].(*logos.String).Value,
+			x:    float64(toI(args[1])), y: float64(toI(args[2])),
+			w: float64(toI(args[3])), h: float64(toI(args[4])),
+			radius: float64(toI(args[5])), // frame index (reuses field)
+		})
 		return &logos.Null{}
 	})
 

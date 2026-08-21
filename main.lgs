@@ -1,13 +1,20 @@
 fn on_load() {
     print("game loaded")
+
+    // preload test: decode images at load time, not on first draw
+    preload_sprite("walk.png")
+    preload_sprite("sprite.png")
 }
 
 let player = table{
     x: 40,
     y: 100,
+    anim: 0.0,
+    frame: 0,
+    facing: 1
 }
 
-// fixed target box to collide with
+// fixed target box to collide with (position randomized per hit)
 let target = table{
     x: 200,
     y: 90,
@@ -17,34 +24,66 @@ let target = table{
 
 let hits = 0
 let touching = false
+let music_on = false
 
 fn on_update(dt) {
+    let moving = false
+
     if key_down("right") {
         player.x = player.x + 2
+        player.facing = 1
+        moving = true
     }
     if key_down("left") {
         player.x = player.x - 2
+        player.facing = -1
+        moving = true
     }
     if key_down("up") {
         player.y = player.y - 2
+        moving = true
     }
     if key_down("down") {
         player.y = player.y + 2
+        moving = true
     }
 
-    // rects_overlap test: player is 24x24, target is target.w x target.h
-    let now_touching = rects_overlap(player.x, player.y, 24, 24, target.x, target.y, target.w, target.h)
+    // walking animation: 8 frames/sec while moving, else idle frame 0
+    if moving {
+        player.anim = player.anim + dt
+        player.frame = mathFloor(player.anim * 8) % 4
+    } else {
+        player.anim = 0.0
+        player.frame = 0
+    }
+
+    // rects_overlap test — target respawns at a random spot after each hit
+    let now_touching = rects_overlap(player.x, player.y, 16, 16, target.x, target.y, target.w, target.h)
     if now_touching {
         if !touching {
             hits = hits + 1
-            print("HIT #${hits} at player ${player.x},${player.y}")
+            print("HIT #${hits}!")
+            play_sound("beep.wav")
+            target.x = random(60, 900)
+            target.y = random(30, 180)
         }
     }
     touching = now_touching
 
-    let m = mouse_pos()
-    if mouse_pressed("left") {
-        print("click at ${m.x},${m.y}")
+    // camera follows player horizontally (world is ~1000 wide)
+    set_camera(player.x - 140, 0)
+
+    // music toggle on M
+    if key_pressed("m") {
+        if music_on {
+            stop_music()
+            music_on = false
+            print("music off")
+        } else {
+            play_music("music.wav")
+            music_on = true
+            print("music on")
+        }
     }
 
     // quit test: ESC closes the game
@@ -52,39 +91,37 @@ fn on_update(dt) {
         set_title("goodbye!")
         quit()
     }
+
+    let m = mouse_pos()
+    if mouse_pressed("left") {
+        print("click at ${m.x},${m.y}")
+    }
 }
 
 fn on_draw() {
+    // world layer (affected by camera): long ground so scrolling is visible
+    draw_line(0, 210, 1000, 210, "#5d6d7e", 2)
+    for i in range(0, 1000, 50) {
+        draw_line(i, 210, i - 10, 220, "#34495e", 1)
+    }
+
     // target box: green while overlapping, red while separate
-    let c = "#e74c3c"
+    let c = "#e67e22"
     if touching {
         c = "#2ecc71"
     }
     draw_rect(target.x, target.y, target.w, target.h, c)
 
-    // player box
-    draw_rect(player.x, player.y, 24, 24, "#3498db")
+    // walking character: 4-frame sheet, flipped by facing via scale trick
+    draw_sprite_frame("walk.png", player.x, player.y, 16, 16, player.frame)
 
-    // status readout
+    // status readout (HUD layer: reset camera so it stays on screen)
+    set_camera(0, 0)
     draw_text("overlap: ${touching}  hits: ${hits}", 80, 12, "#ffffff")
+    draw_text("cam_x: ${camera_x()}  [arrows move, M music, ESC quit]", 20, 228, "#aaaaaa")
 
-    // point_in_rect test: is the mouse cursor inside the target box?
     let m = mouse_pos()
-    let inside = point_in_rect(m.x, m.y, target.x, target.y, target.w, target.h)
-    draw_text("mouse in box: ${inside}", 90, 28, "#f1c40f")
-
-    // distance test: line from player center to target center + length label
-    let d = distance(player.x + 12, player.y + 12, target.x + 25, target.y + 30)
-    draw_line(player.x + 12, player.y + 12, target.x + 25, target.y + 30, "#9b59b6", 1)
-    draw_text("dist: ${d}", (player.x + target.x) / 2 - 20, (player.y + target.y) / 2 - 10, "#bb86fc")
-
-    draw_text("arrows to move into the box", 70, 228, "#aaaaaa")
-    draw_text("size: ${window_width()}x${window_height()}  esc=quit", 70, 216, "#7f8c8d")
-
     if mouse_down("left") {
         draw_circle(m.x, m.y, 5, "#ff00ff")
     }
-
-    // sprite demos (kept from earlier tests)
-    draw_sprite_ex("sprite.png", 290, 200, 1.0, 45)
 }

@@ -166,6 +166,11 @@ func registerBindings(vm *logos.VM, g *Game) {
 		return &logos.Null{}
 	})
 
+	vm.Register("atan2", func(args ...logos.Object) logos.Object {
+		// returns degrees; pairs with draw_sprite_ex for aiming math
+		return &logos.Float{Value: math.Atan2(toF(args[0]), toF(args[1])) * 180 / math.Pi}
+	})
+
 	vm.Register("rects_overlap", func(args ...logos.Object) logos.Object {
 		x1, y1, w1, h1 := toF(args[0]), toF(args[1]), toF(args[2]), toF(args[3])
 		x2, y2, w2, h2 := toF(args[4]), toF(args[5]), toF(args[6]), toF(args[7])

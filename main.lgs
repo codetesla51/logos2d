@@ -1,13 +1,13 @@
 // ============================================================
-// ARENA SHOOTER — logos2d demo game
-// Move: WASD/arrows   Shoot: left click   Music: M   Quit: ESC
+// ARENA SHOOTER — logos2d demo game (Kenney space-shooter assets)
+// Move: WASD/arrows   Aim+Shoot: mouse   Music: M   Quit: ESC
 // ============================================================
 
 fn on_load() {
-    // decode everything now instead of mid-gameplay (also reports missing
-    // files immediately — missing assets just warn, game still runs)
-    preload_sprite("player_walk.png")
-    preload_sprite("enemy_walk.png")
+    // decode everything now instead of mid-gameplay
+    preload_sprite("stars.png")
+    preload_sprite("player.png")
+    preload_sprite("enemy.png")
     preload_sprite("bullet.png")
     print("game loaded")
 }
@@ -17,9 +17,7 @@ fn on_load() {
 let player = table{
     x: 480.0,
     y: 320.0,
-    anim: 0.0,
-    frame: 0,
-    moving: false,
+    ang: -90.0,   // facing (degrees), follows the mouse
 }
 
 let hp = 3
@@ -41,7 +39,7 @@ const WORLD_H = 640
 fn spawn_enemy() {
     // spawn just outside a random arena edge
     let side = random(0, 3)
-    let e = table{x: 0.0, y: 0.0, hp: 2}
+    let e = table{x: 0.0, y: 0.0, hp: 2, ang: 0.0}
     if side == 0 {
         e.x = random(0, WORLD_W)
         e.y = -20
@@ -62,15 +60,17 @@ fn spawn_enemy() {
 }
 
 fn shoot(tx, ty) {
-    let dx = tx - (player.x + 8)
-    let dy = ty - (player.y + 8)
+    let px = player.x + 8
+    let py = player.y + 8
+    let dx = tx - px
+    let dy = ty - py
     let d = mathSqrt(dx * dx + dy * dy)
     if d < 1 {
         return 0
     }
     let b = table{
-        x: player.x + 8,
-        y: player.y + 8,
+        x: px + dx / d * 14,
+        y: py + dy / d * 14,
         vx: dx / d * 6,
         vy: dy / d * 6,
         life: 90
@@ -105,22 +105,17 @@ fn on_update(dt) {
     }
 
     // ---- movement ----
-    let moving = false
     if key_down("right") || key_down("d") {
         player.x = player.x + 2.4
-        moving = true
     }
     if key_down("left") || key_down("a") {
         player.x = player.x - 2.4
-        moving = true
     }
     if key_down("down") || key_down("s") {
         player.y = player.y + 2.4
-        moving = true
     }
     if key_down("up") || key_down("w") {
         player.y = player.y - 2.4
-        moving = true
     }
 
     // keep inside world
@@ -128,15 +123,6 @@ fn on_update(dt) {
     if player.x > WORLD_W - 16 { player.x = WORLD_W - 16 }
     if player.y < 0 { player.y = 0 }
     if player.y > WORLD_H - 16 { player.y = WORLD_H - 16 }
-
-    // walk animation: 8 fps while moving
-    if moving {
-        player.anim = player.anim + dt
-        player.frame = mathFloor(player.anim * 8) % 6
-    } else {
-        player.anim = 0.0
-        player.frame = 0
-    }
 
     // ---- camera follows player, clamped to world ----
     let cx = player.x + 8 - 160
@@ -147,15 +133,18 @@ fn on_update(dt) {
     if cy > WORLD_H - 240 { cy = WORLD_H - 240 }
     set_camera(cx, cy)
 
-    // ---- shooting: aim at mouse (world coords) ----
+    // ---- aim + shoot (mouse in world coords) ----
     let m = mouse_pos()
+    let wx = m.x + camera_x()
+    let wy = m.y + camera_y()
+    player.ang = atan2(wy - (player.y + 8), wx - (player.x + 8))
     if mouse_pressed("left") {
-        shoot(m.x + camera_x(), m.y + camera_y())
+        shoot(wx, wy)
     }
 
     // ---- music toggle ----
     if key_pressed("m") {
-        play_music("music.mp3")
+        play_music("music.wav")
     }
 
     // ---- bullets ----
@@ -192,6 +181,7 @@ fn on_update(dt) {
             }
             e.x = e.x + dx / d * spd
             e.y = e.y + dy / d * spd
+            e.ang = atan2(dy, dx)
         }
         push(alive_enemies, e)
     }
@@ -244,36 +234,31 @@ fn on_update(dt) {
 // ---------------- draw ----------------
 
 fn on_draw() {
-    // floor grid (world space)
-    for gx in range(0, WORLD_W, 32) {
-        draw_line(gx, 0, gx, WORLD_H, "#1a2530", 1)
-    }
-    for gy in range(0, WORLD_H, 32) {
-        draw_line(0, gy, WORLD_W, gy, "#1a2530", 1)
-    }
+    // starfield spans the whole world
+    draw_sprite("stars.png", 0, 0)
+
     // arena border
     draw_rect(-2, -2, WORLD_W + 4, 2, "#44607a")
     draw_rect(-2, WORLD_H, WORLD_W + 4, 2, "#44607a")
     draw_rect(-2, 0, 2, WORLD_H + 2, "#44607a")
     draw_rect(WORLD_W, 0, 2, WORLD_H + 2, "#44607a")
 
-    // target-style marker on each enemy
+    // enemies (ships point up natively -> rotate ang+90)
     for e in enemies {
-        draw_rect(e.x + 2, e.y + 2, 12, 12, "#c0392b")
-        draw_sprite_frame("enemy_walk.png", e.x, e.y, 16, 16, frame_t / 8 % 4)
+        draw_sprite_ex("enemy.png", e.x + 9, e.y + 9, 0.22, e.ang + 90)
     }
 
-    // bullets
+    // bullets (bolt is vertical natively -> rotate velocity angle+90)
     for b in bullets {
-        draw_sprite("bullet.png", b.x - 3, b.y - 3)
+        draw_sprite_ex("bullet.png", b.x, b.y, 0.35, atan2(b.vy, b.vx) + 90)
     }
 
-    // player (blink while invulnerable)
+    // player ship (blink while invulnerable)
     if inv == 0 || frame_t % 8 < 5 {
-        draw_sprite_frame("player_walk.png", player.x, player.y, 16, 16, player.frame)
+        draw_sprite_ex("player.png", player.x + 8, player.y + 8, 0.22, player.ang + 90)
     }
 
-    // aim line from player toward mouse
+    // aim line from ship toward mouse
     let m = mouse_pos()
     let wx = m.x + camera_x()
     let wy = m.y + camera_y()
@@ -290,7 +275,6 @@ fn on_draw() {
 
     draw_text("SCORE ${score}", 250, 6, "#ffffff")
     draw_text("kills: ${kills}", 250, 18, "#95a5a6")
-    draw_text("mouse: ${m.x},${m.y}", 240, 30, "#556677")
 
     if mouse_down("left") {
         draw_circle(m.x, m.y, 4, "#ff00ff")

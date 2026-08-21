@@ -3,7 +3,7 @@ module github.com/codetesla51/logos2d
 go 1.25.6
 
 require (
-	github.com/codetesla51/logos v0.4.7
+	github.com/codetesla51/logos v0.4.8
 	github.com/hajimehoshi/ebiten/v2 v2.9.10
 	golang.org/x/image v0.43.0
 )

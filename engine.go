@@ -17,6 +17,12 @@ import (
 	"golang.org/x/image/font/opentype"
 )
 
+// logical game resolution (what the script sees as coordinates)
+const (
+	gameW = 320
+	gameH = 240
+)
+
 // drawCmd is one queued drawing primitive, filled by the Logos draw_*
 // builtins during on_draw and rendered by Game.Draw.
 type drawCmd struct {
@@ -37,6 +43,7 @@ type Game struct {
 	face                        font.Face
 	keysCurr, keysPrev          map[ebiten.Key]bool
 	mouseCurr, mousePrev        map[ebiten.MouseButton]bool
+	quitRequested               bool
 }
 
 func newGame(vm *logos.VM) *Game {
@@ -169,6 +176,9 @@ func (g *Game) mousePressed(b ebiten.MouseButton) bool {
 func (g *Game) Update() error {
 	g.pollInput()
 	callScript(g.vm, "on_update", 1.0/float64(ebiten.TPS()))
+	if g.quitRequested {
+		return ebiten.Termination // clean shutdown from script's quit()
+	}
 	return nil
 }
 
@@ -221,5 +231,5 @@ func (g *Game) Draw(screen *ebiten.Image) {
 }
 
 func (g *Game) Layout(w, h int) (int, int) {
-	return 320, 240
+	return gameW, gameH
 }

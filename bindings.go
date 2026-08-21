@@ -92,6 +92,24 @@ func registerBindings(vm *logos.VM, g *Game) {
 		return &logos.Null{}
 	})
 
+	vm.Register("window_width", func(args ...logos.Object) logos.Object {
+		return &logos.Integer{Value: gameW}
+	})
+
+	vm.Register("window_height", func(args ...logos.Object) logos.Object {
+		return &logos.Integer{Value: gameH}
+	})
+
+	vm.Register("set_title", func(args ...logos.Object) logos.Object {
+		ebiten.SetWindowTitle(args[0].(*logos.String).Value)
+		return &logos.Null{}
+	})
+
+	vm.Register("quit", func(args ...logos.Object) logos.Object {
+		g.quitRequested = true // Update() turns this into ebiten.Termination
+		return &logos.Null{}
+	})
+
 	vm.Register("rects_overlap", func(args ...logos.Object) logos.Object {
 		x1, y1, w1, h1 := toF(args[0]), toF(args[1]), toF(args[2]), toF(args[3])
 		x2, y2, w2, h2 := toF(args[4]), toF(args[5]), toF(args[6]), toF(args[7])

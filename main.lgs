@@ -20,6 +20,7 @@ fn on_load() {
     preload_sprite("laser_red.png")
     preload_sprite("flame.png")
     preload_sprite("shield.png")
+    play_music("music.mp3")
     print("game loaded")
 }
 
@@ -39,6 +40,7 @@ let meteor_every = 210
 let weapon = "blue"      // blue | green | red
 let weapon_t = 0         // ticks left on picked-up weapon (0 = forever default)
 let shield_t = 0         // shield active ticks
+let music_on = true      // starts playing in on_load
 
 let bullets = []
 let enemies = []
@@ -156,6 +158,7 @@ fn reset_game() {
     meteors = []
     powerups = []
     booms = []
+    play_music("music.mp3")
 }
 
 // ---------------- update ----------------
@@ -205,7 +208,13 @@ fn on_update(dt) {
     }
 
     if key_pressed("m") {
-        play_music("music.mp3")
+        if music_on {
+            stop_music()
+            music_on = false
+        } else {
+            play_music("music.mp3")
+            music_on = true
+        }
     }
 
     // ---- bullets ----
@@ -257,7 +266,7 @@ fn on_update(dt) {
     for b in bullets {
         for e in enemies {
             if e.hp > 0 {
-                if rects_overlap(b.x - 2, b.y - 8, 4, 14, e.x + 4, e.y + 4, 10, 10) {
+                if rects_overlap(b.x - 2, b.y - 8, 4, 14, e.x + 1, e.y + 1, 16, 16) {
                     e.hp = e.hp - 1
                     b.y = -100
                     if e.hp <= 0 {
@@ -272,7 +281,7 @@ fn on_update(dt) {
         }
         for m in meteors {
             if m.hp > 0 {
-                if rects_overlap(b.x - 2, b.y - 8, 4, 14, m.x + 4, m.y + 4, 12, 12) {
+                if rects_overlap(b.x - 2, b.y - 8, 4, 14, m.x + 1, m.y + 1, 18, 18) {
                     m.hp = m.hp - 1
                     b.y = -100
                     if m.hp <= 0 {
@@ -306,13 +315,13 @@ fn on_update(dt) {
     let keep_e = []
     for e in enemies {
         let gone = false
-        if e.y > H - 34 {
+        if e.y > H - 20 {
             gone = true
             if score >= 5 {
                 score = score - 5
             }
         }
-        if rects_overlap(px + 1, 205, 14, 14, e.x + 4, e.y + 4, 10, 10) {
+        if rects_overlap(px + 4, 206, 8, 12, e.x + 1, e.y + 1, 16, 16) {
             gone = true
             boom(e.x + 9, e.y + 9)
             if shield_t == 0 {
@@ -333,7 +342,7 @@ fn on_update(dt) {
         if m.y > H - 20 {
             gone = true
         }
-        if rects_overlap(px + 1, 205, 14, 14, m.x + 4, m.y + 4, 12, 12) {
+        if rects_overlap(px + 4, 206, 8, 12, m.x + 1, m.y + 1, 18, 18) {
             gone = true
             boom(m.x + 10, m.y + 10)
             play_sound("explosion.wav")

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"github.com/codetesla51/logos/interpreter"
 	"github.com/codetesla51/logos/logos"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text"
 	"math"
 	"math/rand/v2"
 	"os"
+	"strings"
 )
 
 // parseKey maps a Logos string to an Ebiten key.
@@ -46,7 +48,7 @@ func parseMouseButton(name string) (ebiten.MouseButton, bool) {
 }
 
 // registerBindings wires every Logos-callable builtin to the game state.
-func registerBindings(vm *logos.VM, g *Game) {
+func registerBindings(vm *interpreter.Interpreter, g *Game) {
 	vm.Register("draw_rect", func(args ...logos.Object) logos.Object {
 		g.cmds = append(g.cmds, drawCmd{
 			camX: g.camX, camY: g.camY,
@@ -153,6 +155,232 @@ func registerBindings(vm *logos.VM, g *Game) {
 			return &logos.Bool{Value: false}
 		}
 		return &logos.Bool{Value: cliFlag(name.Value)}
+	})
+
+	// ---------------- declarative ECS layer ----------------
+	// Entities are opaque integer IDs. Fixed props (x/y/vx/vy/rot/spin/
+	// scale/hp/sprite) live in struct fields; any other spawn key lands in
+	// the entity's Data map for the script's own use.
+
+	entGet := func(e *Entity, key string) interpreter.Object {
+		switch key {
+		case "x":
+			return &logos.Float{Value: e.X}
+		case "y":
+			return &logos.Float{Value: e.Y}
+		case "vx":
+			return &logos.Float{Value: e.VX}
+		case "vy":
+			return &logos.Float{Value: e.VY}
+		case "rot":
+			return &logos.Float{Value: e.Rot}
+		case "spin":
+			return &logos.Float{Value: e.Spin}
+		case "scale":
+			return &logos.Float{Value: e.Scale}
+		case "hp":
+			return &logos.Integer{Value: e.HP}
+		case "sprite":
+			return &logos.String{Value: e.Sprite}
+		case "group":
+			return &logos.String{Value: e.Group}
+		}
+		if v, ok := e.Data[key]; ok {
+			return v
+		}
+		return &logos.Null{}
+	}
+
+	setNum := func(e *Entity, key string, f float64) {
+		switch key {
+		case "x":
+			e.X = f
+		case "y":
+			e.Y = f
+		case "vx":
+			e.VX = f
+		case "vy":
+			e.VY = f
+		case "rot":
+			e.Rot = f
+		case "spin":
+			e.Spin = f
+		case "scale":
+			e.Scale = f
+		case "w":
+			e.HW = f / 2 // full extent prop -> half extents around center
+		case "h":
+			e.HH = f / 2
+		}
+	}
+
+	isCoreKey := func(key string) bool {
+		switch key {
+		case "x", "y", "vx", "vy", "rot", "spin", "scale", "w", "h":
+			return true
+		}
+		return false
+	}
+
+	entSet := func(e *Entity, key string, v logos.Object) {
+		switch val := v.(type) {
+		case *logos.Float:
+			if key == "hp" {
+				e.HP = int64(val.Value)
+				e.HasHP = true
+				return
+			}
+			setNum(e, key, val.Value)
+			if !isCoreKey(key) {
+				e.Data[key] = val
+			}
+		case *logos.Integer:
+			if key == "hp" {
+				e.HP = val.Value
+				e.HasHP = true
+				return
+			}
+			// CRITICAL: integer literals (vy: -6, w: 19) must still reach
+			// the numeric fields — coerce instead of dumping into Data.
+			setNum(e, key, float64(val.Value))
+			if !isCoreKey(key) {
+				e.Data[key] = val
+			}
+		case *logos.String:
+			if key == "sprite" {
+				e.Sprite = val.Value
+			} else {
+				e.Data[key] = val
+			}
+		default:
+			e.Data[key] = v
+		}
+	}
+
+	getEnt := func(args []logos.Object) *Entity {
+		id := toI(args[0])
+		return g.world.entity(id)
+	}
+
+	vm.Register("create", func(args ...logos.Object) logos.Object {
+		g.world.active = true
+		group := args[0].(*logos.String).Value
+		sprite := args[1].(*logos.String).Value
+		e := &Entity{
+			Group:  group,
+			Sprite: sprite,
+			X:      toF(args[2]),
+			Y:      toF(args[3]),
+			HP:     1, // default: alive unless props say otherwise
+			HasHP:  true,
+			Data:   map[string]interpreter.Object{},
+		}
+		if props, ok := args[4].(*logos.Table); ok {
+			for k, v := range props.Pairs {
+				key := strings.TrimPrefix(k, "STRING:")
+				if key == "hp" {
+					e.HasHP = true
+				}
+				entSet(e, key, v)
+			}
+		}
+		if e.Scale == 0 {
+			e.Scale = 1
+		}
+		id := g.world.mustSpawn(e)
+		return &logos.Integer{Value: id}
+	})
+
+	vm.Register("kill", func(args ...logos.Object) logos.Object {
+		g.world.kill(toI(args[0]))
+		return &logos.Null{}
+	})
+
+	vm.Register("ent_get", func(args ...logos.Object) logos.Object {
+		e := getEnt(args)
+		if e == nil {
+			return &logos.Null{}
+		}
+		return entGet(e, args[1].(*logos.String).Value)
+	})
+
+	vm.Register("ent_set", func(args ...logos.Object) logos.Object {
+		e := getEnt(args)
+		if e != nil {
+			entSet(e, args[1].(*logos.String).Value, args[2])
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("group_count", func(args ...logos.Object) logos.Object {
+		return &logos.Integer{Value: g.world.count(args[0].(*logos.String).Value)}
+	})
+
+	vm.Register("group_ids", func(args ...logos.Object) logos.Object {
+		ids := make([]interpreter.Object, 0, 8)
+		for _, e := range g.world.group(args[0].(*logos.String).Value) {
+			ids = append(ids, &logos.Integer{Value: e.ID})
+		}
+		return &logos.Array{Elements: ids}
+	})
+
+	vm.Register("set_world_paused", func(args ...logos.Object) logos.Object {
+		if bl, ok := args[0].(*logos.Bool); ok {
+			g.world.paused = bl.Value
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("reset_world", func(args ...logos.Object) logos.Object {
+		g.world.reset()
+		return &logos.Null{}
+	})
+
+	storeClosure := func(arg logos.Object) *logos.Function {
+		if fn, ok := arg.(*logos.Function); ok {
+			g.world.active = true
+			return fn
+		}
+		return nil
+	}
+
+	vm.Register("collide", func(args ...logos.Object) logos.Object {
+		fn := storeClosure(args[2])
+		if fn != nil {
+			g.world.rules = append(g.world.rules, CollideRule{
+				A:  args[0].(*logos.String).Value,
+				B:  args[1].(*logos.String).Value,
+				Fn: fn,
+			})
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("every", func(args ...logos.Object) logos.Object {
+		fn := storeClosure(args[1])
+		if fn != nil {
+			g.world.timers = append(g.world.timers, &Timer{
+				Interval: int(toI(args[0])), Left: int(toI(args[0])), Repeat: true, Fn: fn,
+			})
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("after", func(args ...logos.Object) logos.Object {
+		fn := storeClosure(args[1])
+		if fn != nil {
+			g.world.timers = append(g.world.timers, &Timer{
+				Interval: int(toI(args[0])), Left: int(toI(args[0])), Repeat: false, Fn: fn,
+			})
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("ent_on_tick", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			e.TickFn = storeClosure(args[1])
+		}
+		return &logos.Null{}
 	})
 
 	vm.Register("quit", func(args ...logos.Object) logos.Object {

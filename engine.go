@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/codetesla51/logos/interpreter"
 	"image"
 	"image/color"
 	"io"
@@ -44,7 +45,8 @@ type drawCmd struct {
 }
 
 type Game struct {
-	vm                   *logos.VM
+	vm                   *interpreter.Interpreter
+	world                World
 	cmds                 []drawCmd
 	sprites              map[string]*ebiten.Image
 	failed               map[string]bool // sprite paths that failed to load (warn once)
@@ -60,9 +62,10 @@ type Game struct {
 	scriptMod            time.Time // main.lgs mtime for hot reload
 }
 
-func newGame(vm *logos.VM) *Game {
+func newGame(vm *interpreter.Interpreter) *Game {
 	g := &Game{
 		vm:          vm,
+		world:       *newWorld(),
 		sprites:     map[string]*ebiten.Image{},
 		failed:      map[string]bool{},
 		face:        loadFont(),
@@ -245,13 +248,17 @@ func (g *Game) playSound(path string) {
 }
 
 func (g *Game) playMusic(path string) {
+	fmt.Println("[music] 1 load")
 	pcm, err := g.loadAudio(path)
 	if err != nil {
 		fmt.Println("play_music:", err)
 		return
 	}
+	fmt.Println("[music] 2 loop")
 	loop := audio.NewInfiniteLoop(bytes.NewReader(pcm), int64(len(pcm)))
+	fmt.Println("[music] 3 newplayer")
 	p, err := g.audioCtx.NewPlayer(loop)
+	fmt.Println("[music] 4 created")
 	if err != nil {
 		fmt.Println("play_music:", err)
 		return
@@ -286,14 +293,29 @@ func (g *Game) checkHotReload() {
 		fmt.Println("[hot-reload] error (keeping old code):", err)
 		return
 	}
+	g.world.reset()
+	closureErrShown = false
 	g.vm.Call("on_load")
 	fmt.Println("[hot-reload] main.lgs reloaded")
+}
+
+// callHook invokes an OPTIONAL script hook; absence of the function is
+// normal (e.g. a pure-ECS script has no on_draw), real errors still log.
+func (g *Game) callHook(fn string, args ...interface{}) {
+	if _, err := g.vm.Call(fn, args...); err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "not found: "+fn) {
+			return
+		}
+		fmt.Println(fn, "error:", msg)
+	}
 }
 
 func (g *Game) Update() error {
 	g.pollInput()
 	g.checkHotReload()
 	callScript(g.vm, "on_update", 1.0/float64(ebiten.TPS()))
+	g.simulate() // declarative layer: timers, motion, steering, collisions
 	if g.quitRequested {
 		return ebiten.Termination // clean shutdown from script's quit()
 	}
@@ -301,8 +323,17 @@ func (g *Game) Update() error {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
-	g.cmds = g.cmds[:0] // reset queue; on_draw refills it via draw_* builtins
-	callScript(g.vm, "on_draw")
+	g.cmds = g.cmds[:0] // reset queue; hooks refill it via draw_* builtins
+
+	if g.world.active {
+		// ECS mode: background hook, auto-drawn entities, HUD hook.
+		g.callHook("on_draw_back")
+		g.drawEntities()
+		g.callHook("on_draw_front")
+	} else {
+		// legacy imperative mode: the script draws everything itself.
+		callScript(g.vm, "on_draw")
+	}
 
 	for _, c := range g.cmds {
 		// world-space: every command is drawn relative to ITS camera snapshot,

@@ -1,0 +1,807 @@
+// ============================================================
+// VOID RUNNER — declarative edition (demo2)
+// Same game as demo/, but the script owns NO arrays, NO movement
+// loops, NO collision boxes, NO entity drawing. The engine's ECS
+// runs the world; this file is only rules + personality.
+// Move: A/D or arrows   Fire: SPACE (or B for autopilot)   P pause  M music
+// Run: ./logos2d demo2/main.lgs [-auto]
+// ============================================================
+
+// ---------------- constants ----------------
+const W = 320
+const H = 240
+
+const COOLDOWN_BLUE = 8
+const COOLDOWN_RAPID = 5
+const COOLDOWN_TWIN = 9
+const WEAPON_DURATION = 600
+
+const METEOR_INTERVAL_START = 70
+const METEOR_INTERVAL_MIN = 18
+
+const PTS_METEOR = 20
+const PTS_SHIP = 15
+const PTS_WARSHIP = 150
+const PTS_MOTHER = 300
+const MOTHER_HP = 12
+
+// ---------------- state (rules only — no world arrays!) ----------------
+let state = "menu"        // menu | play | pause | over
+let hp = 3
+let score = 0
+let kills = 0
+let inv = 0
+let frame_t = 0
+let cooldown = 0
+let weapon = "blue"
+let weapon_t = 0
+let shield_t = 0
+let music_on = true
+let shake_t = 0
+let over_t = 0
+let spawn_t = 30
+let foe_armed = 360       // next warship arrival
+let mother_wave = 900     // next mother duo arrival
+let pid = 0               // the player entity id
+let stars_far = []
+let stars_near = []
+let booms = []            // visual-only juice (not gameplay entities)
+let parts = []
+let auto = cli_flag("auto")
+let bot_target = -1000.0
+
+fn filter(arr, pred) {
+    let out = []
+    for x in arr {
+        if pred(x) {
+            out = push(out, x)
+        }
+    }
+    return out
+}
+
+fn init_stars() {
+    stars_far = []
+    stars_near = []
+    for i in range(0, 36, 1) {
+        let s = table{x: random(0, W), y: random(0, H)}
+        stars_far = push(stars_far, s)
+    }
+    for i in range(0, 22, 1) {
+        let s = table{x: random(0, W), y: random(0, H)}
+        stars_near = push(stars_near, s)
+    }
+}
+
+fn burst(x, y, n, c) {
+    for i in range(0, n, 1) {
+        let ang = random(0, 359) * 3.14159 / 180.0
+        let sp = random(6, 26) / 10.0
+        let p = table{
+            x: x, y: y,
+            vx: math_cos(ang) * sp, vy: math_sin(ang) * sp,
+            t: 0, c: c
+        }
+        parts = push(parts, p)
+    }
+}
+
+fn boom_at(x, y) { booms = push(booms, table{x: x, y: y, t: 0}) }
+
+fn explode_at(x, y, color) {
+    boom_at(x, y)
+    burst(x, y, 10, color)
+    play_sound("explosion.wav")
+}
+
+fn drop_powerup(x, y) {
+    let roll = random(1, 4)
+    let kind = "rapid"
+    if roll == 2 {
+        kind = "twin"
+    }
+    if roll == 3 {
+        kind = "shield"
+    }
+    if roll == 4 {
+        kind = "heart"
+    }
+    create("powerups", "pu_" + kind + ".png", x, y, table{vy: 1.2, scale: 0.45, w: 14, h: 14, kind: kind})
+}
+
+// ---------------- lifecycle ----------------
+
+fn start_game() {
+    reset_world()
+    hp = 3
+    score = 0
+    kills = 0
+    inv = 0
+    cooldown = 0
+    spawn_t = 30
+    weapon = "blue"
+    weapon_t = 0
+    shield_t = 0
+    shake_t = 0
+    booms = []
+    parts = []
+    foe_armed = frame_t + 360
+    mother_wave = frame_t + 900
+    init_stars()
+    // the player is just another entity — spawned last so it draws on top
+    pid = create("player", "player.png", 160, 212, table{scale: 0.22, w: 10, h: 14})
+    over_t = 0
+    set_world_paused(false)
+    state = "play"
+}
+
+fn on_load() {
+    preload_sprite("player.png")
+    preload_sprite("meteor.png")
+    preload_sprite("ufo.png")
+    preload_sprite("ufoBlue.png")
+    preload_sprite("ufoGreen.png")
+    preload_sprite("enemy.png")
+    preload_sprite("enemy_blue.png")
+    preload_sprite("enemy_green.png")
+    preload_sprite("bullet.png")
+    preload_sprite("laser_green.png")
+    preload_sprite("laser_red.png")
+    preload_sprite("shield.png")
+    preload_sprite("pu_rapid.png")
+    preload_sprite("pu_twin.png")
+    preload_sprite("pu_shield.png")
+    preload_sprite("pu_heart.png")
+    init_stars()
+    register_rules()
+    print("game loaded (declarative)")
+}
+
+// ALL interaction rules of the game, declared once.
+fn register_rules() {
+    // bullets shred meteors (2 hp, knockback, sparks, drops)
+    collide("bullets", "meteors", fn(b, m) {
+        let nhp = ent_get(m, "hp") - 1
+        ent_set(m, "hp", nhp)
+        kill(b)
+        ent_set(m, "y", ent_get(m, "y") - 2)
+        burst(ent_get(b, "x"), ent_get(b, "y") + 10, 3, "#f1c40f")
+        if nhp <= 0 {
+            score += PTS_METEOR
+            kills += 1
+            explode_at(ent_get(m, "x") + 10, ent_get(m, "y") + 10, "#a07050")
+            if random(1, 6) == 1 {
+                drop_powerup(ent_get(m, "x") + 10, ent_get(m, "y"))
+            }
+            kill(m)
+        }
+    })
+
+    // bullets pop obstacle ships instantly
+    collide("bullets", "ships", fn(b, e) {
+        kill(b)
+        score += PTS_SHIP
+        kills += 1
+        explode_at(ent_get(e, "x"), ent_get(e, "y"), "#e74c3c")
+        kill(e)
+    })
+
+    // bullets can shoot down enemy lasers mid-air
+    collide("bullets", "ebullets", fn(b, eb) {
+        kill(b)
+        kill(eb)
+        burst(ent_get(eb, "x"), ent_get(eb, "y"), 3, "#ff2222")
+    })
+
+    // warship takes hits
+    collide("bullets", "warship", fn(b, f) {
+        kill(b)
+        play_sound("hit.wav")
+        let nhp = ent_get(f, "hp") - 1
+        ent_set(f, "hp", nhp)
+        if nhp <= 0 {
+            score += PTS_WARSHIP
+            kills += 1
+            explode_at(ent_get(f, "x"), ent_get(f, "y"), "#ff00ff")
+            shake_t = 12
+            drop_powerup(ent_get(f, "x"), ent_get(f, "y") + 12)
+            kill(f)
+            foe_armed = frame_t + random(600, 1100)
+        }
+    })
+
+    // mother ships take hits
+    collide("bullets", "mothers", fn(b, ms) {
+        kill(b)
+        play_sound("hit.wav")
+        burst(ent_get(b, "x"), ent_get(b, "y") + 8, 2, "#7fdbff")
+        let nhp = ent_get(ms, "hp") - 1
+        ent_set(ms, "hp", nhp)
+        if nhp <= 0 {
+            score += PTS_MOTHER
+            kills += 1
+            explode_at(ent_get(ms, "x"), ent_get(ms, "y"), "#3498db")
+            shake_t = 12
+            drop_powerup(ent_get(ms, "x"), ent_get(ms, "y") + 12)
+            kill(ms)
+        }
+    })
+
+    // everything that hurts the player
+    collide("meteors", "player", fn(m, p) {
+        explode_at(ent_get(m, "x") + 10, ent_get(m, "y") + 10, "#a07050")
+        kill(m)
+        hurt_player()
+    })
+    collide("ships", "player", fn(e, p) {
+        explode_at(ent_get(e, "x"), ent_get(e, "y"), "#e74c3c")
+        kill(e)
+        hurt_player()
+    })
+    collide("ebullets", "player", fn(eb, p) {
+        kill(eb)
+        burst(ent_get(eb, "x"), ent_get(eb, "y"), 6, "#ff2222")
+        hurt_player()
+    })
+    collide("warship", "player", fn(f, p) { hurt_player() })
+
+    // powerups get collected
+    collide("powerups", "player", fn(pu, p) {
+        apply_powerup(ent_get(pu, "kind"))
+        kill(pu)
+    })
+
+    // survival trickle
+    every(60, fn() {
+        if state == "play" {
+            score += 5
+        }
+    })
+}
+
+fn hurt_player() {
+    if shield_t > 0 {
+        play_sound("shield_down.wav")
+        return 0
+    }
+    if inv > 0 {
+        return 0
+    }
+    hp -= 1
+    inv = 60
+    shake_t = 8
+    play_sound("hurt.wav")
+    return 0
+}
+
+fn apply_powerup(kind) {
+    play_sound("powerup.wav")
+    if kind == "shield" {
+        shield_t = 360
+        play_sound("shield_up.wav")
+    }
+    if kind == "rapid" {
+        weapon = "green"
+        weapon_t = WEAPON_DURATION
+    }
+    if kind == "twin" {
+        weapon = "red"
+        weapon_t = WEAPON_DURATION
+    }
+    if kind == "heart" {
+        if hp < 3 {
+            hp += 1
+        }
+        score += 25
+    }
+}
+
+// ---------------- per-frame rules ----------------
+
+fn on_update(dt) {
+    frame_t += 1
+
+    if key_pressed("m") {
+        if music_on {
+            stop_music()
+            music_on = false
+        } else {
+                    music_on = true
+        }
+    }
+
+    scroll_stars()
+
+    if state == "menu" {
+        set_world_paused(true)
+        if key_pressed("enter") || mouse_pressed("left") || key_pressed("space") || auto {
+            start_game()
+        }
+        return 0
+    }
+
+    if state == "pause" {
+        set_world_paused(true)
+        if key_pressed("p") {
+            state = "play"
+            set_world_paused(false)
+        }
+        return 0
+    }
+
+    if state == "over" {
+        over_t += 1
+        set_world_paused(true)
+        if key_pressed("enter") || (auto && over_t > 150) {
+            start_game()
+            play_sound("powerup.wav")
+        }
+        return 0
+    }
+
+    // ======== play ========
+    if key_pressed("p") {
+        state = "pause"
+        return 0
+    }
+    if key_pressed("b") {
+        auto = !auto
+    }
+
+    steer_player()
+    update_weapon_timers()
+
+    // spawner: denser the longer you survive
+    spawn_t -= 1
+    if spawn_t <= 0 {
+        spawn_meteor()
+        if random(1, 2) == 1 {
+            spawn_ship()
+        }
+        let iv = METEOR_INTERVAL_START - frame_t / 150
+        if iv < METEOR_INTERVAL_MIN {
+            iv = METEOR_INTERVAL_MIN
+        }
+        spawn_t = iv
+    }
+
+    maybe_arm_foes()
+
+    update_fx()
+
+    if hp <= 0 {
+        state = "over"
+        over_t = 0
+        stop_music()
+        play_sound("lose.wav")
+        print("GAME OVER - score ${score}")
+    }
+}
+
+fn steer_player() {
+    // NOTE: player movement is 100% manual here and we deliberately do NOT
+    // set vx on the player entity — simulate() would move it a second time.
+    let vx = 0.0
+    if auto {
+        vx = bot_acc()
+    } else {
+        if key_down("right") || key_down("d") {
+            vx = 2.4
+        }
+        if key_down("left") || key_down("a") {
+            vx = -2.4
+        }
+    }
+
+    // clamp inside walls
+    let nx = ent_get(pid, "x") + vx
+    if nx < 8 {
+        nx = 8
+    }
+    if nx > W - 8 {
+        nx = W - 8
+    }
+    ent_set(pid, "x", nx)
+
+    if inv > 0 {
+        inv -= 1
+        ent_set(pid, "hidden", inv > 0 && frame_t % 8 >= 5)
+    } else {
+        ent_set(pid, "hidden", false)
+    }
+
+    if cooldown > 0 {
+        cooldown -= 1
+    }
+    let want_fire = false
+    if auto {
+        want_fire = bot_should_shoot()
+    } else {
+        want_fire = key_down("space") || mouse_down("left")
+    }
+    if want_fire && cooldown <= 0 {
+        shoot()
+    }
+}
+
+fn shoot() {
+    let bx = ent_get(pid, "x")
+    let img = "bullet.png"
+    if weapon == "green" {
+        img = "laser_green.png"
+        cooldown = COOLDOWN_RAPID
+    }
+    if weapon == "red" {
+        img = "laser_red.png"
+        cooldown = COOLDOWN_TWIN
+        create("bullets", "laser_red.png", bx - 5, 200, table{vy: -6, scale: 0.3, w: 3, h: 7})
+    }
+    if weapon == "blue" {
+        cooldown = COOLDOWN_BLUE
+    }
+    create("bullets", img, bx, 200, table{vy: -6, scale: 0.3, w: 3, h: 7})
+    play_sound("shoot.wav")
+}
+
+fn update_weapon_timers() {
+    if weapon_t > 0 {
+        weapon_t -= 1
+        if weapon_t == 0 && weapon != "blue" {
+            weapon = "blue"
+        }
+    }
+    if shield_t > 0 {
+        shield_t -= 1
+        if shield_t == 0 {
+            play_sound("shield_down.wav")
+        }
+    }
+    if shake_t > 0 {
+        shake_t -= 1
+    }
+}
+
+// ---------------- spawning ----------------
+
+fn spawn_meteor() {
+    create("meteors", "meteor.png", random(8, W - 30), -30, table{
+              vx: random(-8, 8) / 10.0,
+              vy: random(8, 16) / 10.0,
+              rot: random(0, 359),
+              spin: random(-3, 3),
+              scale: 0.45,
+              hp: 2,
+              w: 19, h: 19
+          })
+}
+
+fn spawn_ship() {
+    let roll = random(1, 3)
+    let img = "enemy.png"
+    if roll == 2 {
+        img = "enemy_blue.png"
+    }
+    if roll == 3 {
+        img = "enemy_green.png"
+    }
+    create("ships", img, random(8, W - 26), -24, table{
+              vx: random(-10, 10) / 10.0,
+              vy: random(9, 15) / 10.0,
+              rot: 180,
+              scale: 0.45,
+              w: 13, h: 13
+          })
+}
+
+// warship + mother ships arrive on schedule; their whole AI is one
+// steering closure each — attached straight onto the entity.
+fn maybe_arm_foes() {
+    if group_count("warship") == 0 && frame_t >= foe_armed {
+        let fhp = 6 + kills / 4
+        if fhp > 20 {
+            fhp = 20
+        }
+let wid = create("warship", "ufo.png", 160, 55, table{scale: 0.38, hp: fhp, maxhp: fhp, w: 26, h: 26, shoot_t: 80, rot: 180})
+        print("WARSHIP INCOMING!")
+        ent_on_tick(wid, fn(id) {
+            // chase the player's column, bob, fire straight down
+            let dx = ent_get(pid, "x") - ent_get(id, "x")
+            if dx > 1 {
+                ent_set(id, "x", ent_get(id, "x") + 0.5)
+            }
+            if dx < -1 {
+                ent_set(id, "x", ent_get(id, "x") - 0.5)
+            }
+            ent_set(id, "y", 55.0 + math_sin(frame_t / 30.0) * 8.0)
+            let t = ent_get(id, "shoot_t") - 1
+            if t <= 0 {
+                create("ebullets", "laser_red.png", ent_get(id, "x"), ent_get(id, "y") + 12, table{vy: 3.2, rot: 180, scale: 0.3, w: 3, h: 7})
+                play_sound("efire.wav")
+                t = 42
+            }
+            ent_set(id, "shoot_t", t)
+        })
+    }
+
+    if group_count("mothers") == 0 && frame_t >= mother_wave {
+        spawn_mother(78, "ufoBlue.png", 0)
+        spawn_mother(W - 78, "ufoGreen.png", 2)
+        print("MOTHER SHIPS INBOUND!")
+        mother_wave = frame_t + 1500
+    }
+}
+
+fn spawn_mother(cx, img, phase) {
+    let mid = create("mothers", img, cx, -40, table{hp: MOTHER_HP, scale: 0.62, w: 34, h: 24, ph: phase, bx: cx, shoot_t: 100 + random(0, 40)})
+    ent_on_tick(mid, fn(id) {
+        let y = ent_get(id, "y")
+        if y < 52 {
+            ent_set(id, "y", y + 1.1)
+        }
+        let base = ent_get(id, "bx")
+        ent_set(id, "x", base + math_sin(frame_t / 45.0 + ent_get(id, "ph")) * 24.0)
+        // aimed shot every ~1.5s once in position
+        let st = ent_get(id, "shoot_t") - 1
+        if st <= 0 && y > 20 {
+            let aim = (ent_get(pid, "x") - ent_get(id, "x")) * 0.02
+            if aim > 2.2 {
+                aim = 2.2
+            }
+            if aim < -2.2 {
+                aim = -2.2
+            }
+            create("ebullets", "laser_red.png", ent_get(id, "x"), ent_get(id, "y") + 14, table{vx: aim, vy: 3.2, rot: 180, scale: 0.3, w: 3, h: 7})
+            play_sound("efire.wav")
+            st = 75 + random(0, 50)
+        }
+        ent_set(id, "shoot_t", st)
+    })
+}
+
+// ---------------- background + juice ----------------
+
+fn scroll_stars() {
+    let move = fn(s) {
+        s.y = s.y + 1.4
+        if s.y > H {
+            s.y = 0
+            s.x = random(0, W)
+        }
+        return true
+    }
+    filter(stars_far, move)
+    filter(stars_near, move)
+}
+
+fn update_fx() {
+    booms = filter(booms, fn(bx) {
+        bx.t = bx.t + 1
+        return bx.t < 16
+    })
+    parts = filter(parts, fn(p) {
+        p.x = p.x + p.vx
+        p.y = p.y + p.vy
+        p.t = p.t + 1
+        return p.t < 20
+    })
+}
+
+// ---------------- rendering hooks ----------------
+// back: stars   [engine draws all entities]   front: HUD + juice
+
+fn on_draw_back() {
+    set_camera(shake_x(), shake_y())
+    draw_rect(0, 0, W, H, "#000000")
+    for s in stars_far {
+        draw_rect(s.x, s.y, 1, 2, "#445566")
+    }
+    for s in stars_near {
+        draw_rect(s.x, s.y, 2, 3, "#ddeeff")
+    }
+}
+
+fn on_draw_front() {
+    if state == "menu" {
+        set_camera(0, 0)
+        draw_text("VOID RUNNER 2.0", 160 - text_width("VOID RUNNER 2.0") / 2, 70, "#ffffff")
+        draw_text("declarative edition", 160 - text_width("declarative edition") / 2, 86, "#7fdbff")
+        if frame_t % 60 < 40 {
+            let t3 = "PRESS ENTER TO START"
+            draw_text(t3, 160 - text_width(t3) / 2, 184, "#f1c40f")
+        }
+        return 0
+    }
+
+    // shield bubble follows the player
+    if shield_t > 0 {
+        draw_sprite_ex("shield.png", ent_get(pid, "x"), 212, 0.22, 0)
+    }
+    if cooldown > COOLDOWN_BLUE {
+        draw_circle(ent_get(pid, "x"), 200, 2, "#f1c40f")
+    }
+
+    // juice
+    for bx in booms {
+        draw_circle(bx.x, bx.y, bx.t, "#e67e22")
+        draw_circle(bx.x, bx.y, bx.t / 2, "#f1c40f")
+        if bx.t > 8 {
+            draw_circle(bx.x, bx.y, bx.t / 3, "#ffffff")
+        }
+    }
+    for p in parts {
+        draw_circle(p.x, p.y, (20 - p.t) / 7 + 1, p.c)
+    }
+
+    // enemy health bars
+    for wid in group_ids("warship") {
+        draw_rect(ent_get(wid, "x") - 16, ent_get(wid, "y") - 22, 32, 4, "#333333")
+        draw_rect(ent_get(wid, "x") - 15, ent_get(wid, "y") - 21, ent_get(wid, "hp") * 30 / ent_get(wid, "maxhp"), 2, "#e74c3c")
+    }
+    for mid in group_ids("mothers") {
+        draw_rect(ent_get(mid, "x") - 19, ent_get(mid, "y") - 24, 38, 4, "#333333")
+        draw_rect(ent_get(mid, "x") - 18, ent_get(mid, "y") - 23, ent_get(mid, "hp") * 36 / MOTHER_HP, 2, "#3498db")
+    }
+
+    set_camera(0, 0)
+    draw_hud()
+
+    if state == "pause" {
+        draw_box_line("PAUSED", "press P to resume", "#ffffff", "#95a5a6")
+    }
+    if state == "over" {
+        draw_box_line("GAME OVER", "final score: ${score}", "#e74c3c", "#ffffff")
+    }
+}
+
+fn draw_hud() {
+    for i in range(0, hp, 1) {
+        draw_sprite_ex("life_icon.png", 266 + i * 17, 13, 0.42, 0)
+    }
+    draw_text("SCORE ${score}", 8, 24, "#ffffff")
+    if auto {
+        draw_text("AUTO", 8, 38, "#f1c40f")
+    }
+    if weapon == "green" {
+        draw_text("RAPID ${weapon_t / 60}", 312 - text_width("RAPID ${weapon_t / 60}"), 26, "#2ecc71")
+    }
+    if weapon == "red" {
+        draw_text("TWIN ${weapon_t / 60}", 312 - text_width("TWIN ${weapon_t / 60}"), 26, "#e74c3c")
+    }
+    if shield_t > 0 {
+        draw_text("SHLD ${shield_t / 60}", 312 - text_width("SHLD ${shield_t / 60}"), 40, "#3498db")
+    }
+}
+
+fn draw_box_line(l1, l2, c1, c2) {
+    draw_rect(55, 88, 210, 72, "#000000")
+    draw_text(l1, 160 - text_width(l1) / 2, 104, c1)
+    draw_text(l2, 160 - text_width(l2) / 2, 124, c2)
+}
+
+fn shake_x() {
+    return math_sin(frame_t * 93.0) * shake_t * 0.6
+}
+fn shake_y() {
+    return math_cos(frame_t * 71.0) * shake_t * 0.6
+}
+
+// ---------------- demo bot ----------------
+// Same brain as demo/: predict threats to the player line, pick safest
+// column, dash there, settle with idle sway. Reads the world through
+// group_ids + ent_get — no arrays owned here either.
+
+fn bot_should_shoot() {
+    let bx = ent_get(pid, "x")
+    for m in group_ids("meteors") {
+        if abs(ent_get(m, "x") + 10 - bx) < 11 && ent_get(m, "y") > -10 && ent_get(m, "y") < 206 {
+            return true
+        }
+    }
+    for e in group_ids("ships") {
+        if abs(ent_get(e, "x") - bx) < 11 && ent_get(e, "y") > -10 && ent_get(e, "y") < 206 {
+            return true
+        }
+    }
+    for ms in group_ids("mothers") {
+        if abs(ent_get(ms, "x") - bx) < 18 && ent_get(ms, "y") > 10 {
+            return true
+        }
+    }
+    for wid in group_ids("warship") {
+        if abs(ent_get(wid, "x") - bx) < 16 {
+            return true
+        }
+    }
+    return false
+}
+
+fn bot_pick() {
+    let best_c = ent_get(pid, "x")
+    let best_s = -999999.0
+    for ci in range(0, 38, 1) {
+        let c = 8 + ci * 8
+        if c > W - 8 {
+            c = W - 8
+        }
+        let s = 0.0 - abs(c - ent_get(pid, "x")) * 0.06
+
+        for m in group_ids("meteors") {
+            let my = ent_get(m, "y")
+            let t = (206 - (my + 19)) / ent_get(m, "vy")
+            if t > 0 && t < 70 {
+                let fx = ent_get(m, "x") + 10 + ent_get(m, "vx") * t
+                let near = 25 - abs(fx - c)
+                if near > 0 {
+                    s -= near * (90.0 - t) / 45.0
+                }
+            }
+        }
+        for e in group_ids("ships") {
+            let ey = ent_get(e, "y")
+            let t = (206 - (ey + 15)) / ent_get(e, "vy")
+            if t > 0 && t < 70 {
+                let fx = ent_get(e, "x") + ent_get(e, "vx") * t
+                let near = 20 - abs(fx - c)
+                if near > 0 {
+                    s -= near * (90.0 - t) / 50.0
+                }
+            }
+        }
+        for eb in group_ids("ebullets") {
+            let ey = ent_get(eb, "y")
+            let t = (206 - (ey + 6)) / 3.2
+            if t > 0 && t < 70 {
+                let fx = ent_get(eb, "x") + ent_get(eb, "vx") * t
+                let near = 17 - abs(fx - c)
+                if near > 0 {
+                    s -= near * (70.0 - t) / 20.0
+                }
+            }
+        }
+        for pu in group_ids("powerups") {
+            let pull = 1.5
+            let k = ent_get(pu, "kind")
+            if k == "shield" && shield_t == 0 {
+                pull = 3.0
+            }
+            if k == "heart" && hp < 3 {
+                pull = 3.0
+            }
+            let near = 16 - abs(ent_get(pu, "x") - c)
+            if near > 0 {
+                s += near * pull
+            }
+        }
+        if group_count("warship") > 0 {
+            let wx = ent_get(group_ids("warship")[0], "x")
+            let near = 10 - abs(wx - c)
+            if near > 0 {
+                s += near * 0.4
+            }
+        }
+
+        if s > best_s {
+            best_s = s
+            best_c = c
+        }
+    }
+    return best_c
+}
+
+fn bot_acc() {
+    if frame_t % 4 == 0 || bot_target < -900 {
+        bot_target = bot_pick()
+    }
+    let d = bot_target - ent_get(pid, "x")
+    let a = 0.0
+    if d > 7 {
+        a = 2.4
+    }
+    if d < -7 {
+        a = -2.4
+    }
+    if a == 0.0 {
+        a = math_sin(frame_t / 13.0) * 0.35
+    }
+    return a
+}

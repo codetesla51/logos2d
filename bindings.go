@@ -173,6 +173,15 @@ func registerBindings(vm *logos.VM, g *Game) {
 		return &logos.Null{}
 	})
 
+	vm.Register("math_sin", func(args ...logos.Object) logos.Object {
+		// radians in, float out
+		return &logos.Float{Value: math.Sin(toF(args[0]))}
+	})
+
+	vm.Register("math_cos", func(args ...logos.Object) logos.Object {
+		return &logos.Float{Value: math.Cos(toF(args[0]))}
+	})
+
 	vm.Register("atan2", func(args ...logos.Object) logos.Object {
 		// returns degrees; pairs with draw_sprite_ex for aiming math
 		return &logos.Float{Value: math.Atan2(toF(args[0]), toF(args[1])) * 180 / math.Pi}

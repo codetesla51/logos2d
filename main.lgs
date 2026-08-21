@@ -3,14 +3,22 @@ fn on_load() {
 }
 
 let player = table{
-    x: 150,
-    y: 110,
+    x: 40,
+    y: 100,
 }
 
-let clicks = 0
+// fixed target box to collide with
+let target = table{
+    x: 200,
+    y: 90,
+    w: 50,
+    h: 60,
+}
+
+let hits = 0
+let touching = false
 
 fn on_update(dt) {
-    // key_down: held state for movement
     if key_down("right") {
         player.x = player.x + 2
     }
@@ -24,54 +32,52 @@ fn on_update(dt) {
         player.y = player.y + 2
     }
 
-    // key_pressed / key_released: edge detection
-    if key_pressed("space") {
-        print("space just pressed")
+    // rects_overlap test: player is 24x24, target is target.w x target.h
+    let now_touching = rects_overlap(player.x, player.y, 24, 24, target.x, target.y, target.w, target.h)
+    if now_touching {
+        if !touching {
+            hits = hits + 1
+            print("HIT #${hits} at player ${player.x},${player.y}")
+        }
     }
-    if key_released("space") {
-        print("space released")
-    }
+    touching = now_touching
 
-    // mouse_pos + mouse_pressed
     let m = mouse_pos()
     if mouse_pressed("left") {
-        clicks = clicks + 1
-        print("click ${clicks} at ${m.x},${m.y}")
+        print("click at ${m.x},${m.y}")
     }
-
-    // keep player on screen
-    if player.x < 0 { player.x = 0 }
-    if player.x > 308 { player.x = 308 }
-    if player.y < 0 { player.y = 0 }
-    if player.y > 228 { player.y = 228 }
 }
 
 fn on_draw() {
-    // background line (draw_line test)
-    draw_line(0, 230, 320, 10, "#4488ff", 2)
-
-    // draw_rect test: moving player square (arrow keys)
-    draw_rect(player.x, player.y, 12, 12, "#ff3333")
-
-    // static rect
-    draw_rect(20, 20, 40, 16, "#ff8800")
-
-    // draw_circle test
-    draw_circle(160, 60, 18, "#33cc66")
-
-    // draw_text test: live mouse coords + click counter
-    let m = mouse_pos()
-    draw_text("mouse: ${m.x},${m.y}  clicks: ${clicks}", 80, 120, "#ffee44")
-
-    // draw_sprite test
-    draw_sprite("sprite.png", 40, 180)
-
-    // draw_sprite_ex test: scaled x2, rotated 45 degrees (centered on point)
-    draw_sprite_ex("sprite.png", 240, 170, 2.0, 45)
-
-    // mouse_down test: magenta blob follows cursor while holding left button
-    if mouse_down("left") {
-        let m2 = mouse_pos()
-        draw_circle(m2.x, m2.y, 6, "#ff00ff")
+    // target box: green while overlapping, red while separate
+    let c = "#e74c3c"
+    if touching {
+        c = "#2ecc71"
     }
+    draw_rect(target.x, target.y, target.w, target.h, c)
+
+    // player box
+    draw_rect(player.x, player.y, 24, 24, "#3498db")
+
+    // status readout
+    draw_text("overlap: ${touching}  hits: ${hits}", 80, 12, "#ffffff")
+
+    // point_in_rect test: is the mouse cursor inside the target box?
+    let m = mouse_pos()
+    let inside = point_in_rect(m.x, m.y, target.x, target.y, target.w, target.h)
+    draw_text("mouse in box: ${inside}", 90, 28, "#f1c40f")
+
+    // distance test: line from player center to target center + length label
+    let d = distance(player.x + 12, player.y + 12, target.x + 25, target.y + 30)
+    draw_line(player.x + 12, player.y + 12, target.x + 25, target.y + 30, "#9b59b6", 1)
+    draw_text("dist: ${d}", (player.x + target.x) / 2 - 20, (player.y + target.y) / 2 - 10, "#bb86fc")
+
+    draw_text("arrows to move into the box", 70, 228, "#aaaaaa")
+
+    if mouse_down("left") {
+        draw_circle(m.x, m.y, 5, "#ff00ff")
+    }
+
+    // sprite demos (kept from earlier tests)
+    draw_sprite_ex("sprite.png", 290, 200, 1.0, 45)
 }

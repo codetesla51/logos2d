@@ -304,7 +304,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	g.cmds = g.cmds[:0] // reset queue; on_draw refills it via draw_* builtins
 	callScript(g.vm, "on_draw")
 
-
 	for _, c := range g.cmds {
 		// world-space: every command is drawn relative to ITS camera snapshot,
 		// so scripts can switch cameras mid-draw (e.g. HUD after world)

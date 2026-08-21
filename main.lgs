@@ -1,15 +1,13 @@
 // ============================================================
-// GALAGA DEFENSE — with menu, pause, shake, particles, glide
+// VOID RUNNER — endless space survival
 // Move: A/D or arrows   Fire: hold SPACE   Pause: P   Music: M
+// Dodge the meteor field, blast rocks for powerups.
+// When the UFO warship warps in, dodge its lasers and kill it!
 // ============================================================
 
 fn on_load() {
     preload_sprite("background.png")
     preload_sprite("player.png")
-    preload_sprite("enemy.png")
-    preload_sprite("enemy_black.png")
-    preload_sprite("enemy_blue.png")
-    preload_sprite("enemy_green.png")
     preload_sprite("ufo.png")
     preload_sprite("meteor.png")
     preload_sprite("bullet.png")
@@ -29,29 +27,31 @@ fn on_load() {
 let state = "menu"       // menu | play | pause | over
 
 let px = 152.0
-let pvx = 0.0            // player velocity (glide easing)
+let pvx = 0.0
 let hp = 3
 let score = 0
 let kills = 0
 let inv = 0
 let frame_t = 0
 let cooldown = 0
-let spawn_every = 80
-let meteor_every = 210
-let ufo_every = 540
+let met_interval = 150   // ticks between meteors (shrinks forever)
 
 let weapon = "blue"
 let weapon_t = 0
 let shield_t = 0
 let music_on = true
-let shake_t = 0          // screen shake frames remaining
+let shake_t = 0
+
+// the warship encounter
+let foe = table{active: false, x: 160.0, y: 60.0, vx: 0.7, hp: 6, maxhp: 6, shoot_t: 90}
+let next_foe_at = 480    // first encounter ~8s in
 
 let bullets = []
-let enemies = []
+let ebullets = []
 let meteors = []
 let powerups = []
 let booms = []
-let parts = []           // particles
+let parts = []
 
 const W = 320
 const H = 240
@@ -66,19 +66,22 @@ fn start_game() {
     kills = 0
     inv = 0
     cooldown = 0
-    spawn_every = 80
-    meteor_every = 210
-    ufo_every = 540
+    met_interval = 150
     weapon = "blue"
     weapon_t = 0
     shield_t = 0
     shake_t = 0
     bullets = []
-    enemies = []
+    ebullets = []
     meteors = []
     powerups = []
     booms = []
     parts = []
+    foe.active = false
+    foe.x = 160.0
+    foe.hp = 6
+    foe.maxhp = 6
+    next_foe_at = 480
     state = "play"
     play_music("music.mp3")
 }
@@ -105,57 +108,11 @@ fn shoot() {
     play_sound("shoot.wav")
 }
 
-fn spawn_enemy() {
-    let roll = random(1, 10)
-    let e = table{x: random(8, W - 26), y: -24, spd: 0.9, vx: 0.0, hp: 1, pts: 10, img: "enemy.png", ph: random(0, 100)}
-    if roll <= 4 {
-        e.spd = random(10, 14) / 10.0
-        e.pts = 10
-    }
-    if roll >= 5 && roll <= 6 {
-        e.img = "enemy_blue.png"
-        e.spd = random(7, 9) / 10.0
-        e.pts = 15
-    }
-    if roll == 7 || roll == 8 {
-        e.img = "enemy_green.png"
-        e.spd = random(5, 7) / 10.0
-        e.vx = random(-15, 15) / 10.0
-        e.pts = 15
-    }
-    if roll >= 9 {
-        e.img = "enemy_black.png"
-        e.spd = random(3, 5) / 10.0
-        e.hp = 3
-        e.pts = 40
-    }
-    enemies = push(enemies, e)
-}
-
-fn spawn_ufo() {
-    let from_left = random(0, 1)
-    let e = table{
-        x: -30.0,
-        y: random(30, 90),
-        spd: 0.0,
-        vx: 0.9,
-        hp: 5,
-        pts: 150,
-        img: "ufo.png",
-        ph: random(0, 100)
-    }
-    if from_left == 1 {
-        e.x = W + 30
-        e.vx = 0 - 0.9
-    }
-    enemies = push(enemies, e)
-}
-
 fn spawn_meteor() {
     let m = table{
         x: random(8, W - 30),
         y: -30,
-        spd: random(3, 6) / 10.0,
+        spd: random(4, 9) / 10.0,
         vx: random(-8, 8) / 10.0,
         rot: random(0, 359),
         vr: random(-3, 3),
@@ -169,7 +126,6 @@ fn boom(x, y) {
     booms = push(booms, bfx)
 }
 
-// particle burst: n sparks flying outward
 fn burst(x, y, n, c) {
     for i in range(0, n, 1) {
         let ang = random(0, 359) * 3.14159 / 180.0
@@ -187,9 +143,6 @@ fn burst(x, y, n, c) {
 }
 
 fn drop_powerup(x, y) {
-    if random(1, 10) > 3 {
-        return 0
-    }
     let roll = random(1, 4)
     let kind = "rapid"
     if roll == 2 {
@@ -210,7 +163,6 @@ fn drop_powerup(x, y) {
 fn on_update(dt) {
     frame_t = frame_t + 1
 
-    // music toggle works in any state
     if key_pressed("m") {
         if music_on {
             stop_music()
@@ -221,7 +173,6 @@ fn on_update(dt) {
         }
     }
 
-    // ---- MENU ----
     if state == "menu" {
         if key_pressed("enter") || mouse_pressed("left") || key_pressed("space") {
             start_game()
@@ -229,7 +180,6 @@ fn on_update(dt) {
         return 0
     }
 
-    // ---- PAUSE ----
     if state == "pause" {
         if key_pressed("p") {
             state = "play"
@@ -237,7 +187,6 @@ fn on_update(dt) {
         return 0
     }
 
-    // ---- GAME OVER: wait for restart ----
     if state == "over" {
         if key_pressed("enter") {
             start_game()
@@ -248,17 +197,18 @@ fn on_update(dt) {
 
     // ================= PLAY =================
 
-    // pause
     if key_pressed("p") {
         state = "pause"
         return 0
     }
 
-    frameTick()
+    // survival trickle: +5 every second alive
+    if frame_t % 60 == 0 {
+        score = score + 5
+    }
 
     movePlayer()
 
-    // fire
     if cooldown > 0 {
         cooldown = cooldown - 1
     }
@@ -266,7 +216,6 @@ fn on_update(dt) {
         shoot()
     }
 
-    // timers
     if inv > 0 { inv = inv - 1 }
     if weapon_t > 0 {
         weapon_t = weapon_t - 1
@@ -284,13 +233,13 @@ fn on_update(dt) {
         shake_t = shake_t - 1
     }
 
-    updateBullets()
-    updateSpawns()
-    updateEnemies()
     updateMeteors()
-    handleHits()
+    updateFoe()
+    updateBullets()
     updatePowerups()
     updateFx()
+
+    handleHits()
 
     if hp <= 0 {
         state = "over"
@@ -300,25 +249,7 @@ fn on_update(dt) {
     }
 }
 
-fn frameTick() {
-    // spawns
-    if frame_t % spawn_every == 0 {
-        spawn_enemy()
-        if kills > 0 && kills % 8 == 0 && spawn_every > 25 {
-            spawn_every = spawn_every - 5
-        }
-    }
-    if frame_t % meteor_every == 0 {
-        spawn_meteor()
-    }
-    if frame_t % ufo_every == 0 {
-        spawn_ufo()
-        ufo_every = 700 + random(0, 300)
-    }
-}
-
 fn movePlayer() {
-    // glide easing: accelerate toward input, friction when released
     let acc = 0.0
     if key_down("right") || key_down("d") {
         acc = acc + 0.55
@@ -330,11 +261,79 @@ fn movePlayer() {
     if acc == 0.0 {
         pvx = pvx * 0.78
     }
-    if pvx > 3.2 { pvx = 3.2 }
-    if pvx < -3.2 { pvx = -3.2 }
+    if pvx > 3.4 { pvx = 3.4 }
+    if pvx < -3.4 { pvx = -3.4 }
     px = px + pvx
     if px < 0 { px = 0; pvx = 0 - pvx * 0.4 }
     if px > W - 16 { px = W - 16; pvx = 0 - pvx * 0.4 }
+}
+
+fn updateMeteors() {
+    // endless field, density ramps with survival time
+    met_interval = 210 - frame_t / 200
+    if met_interval < 40 {
+        met_interval = 40
+    }
+    if frame_t % met_interval == 0 {
+        spawn_meteor()
+    }
+
+    let am = []
+    for m in meteors {
+        m.y = m.y + m.spd
+        m.x = m.x + m.vx
+        m.rot = m.rot + m.vr
+        if m.x < -10 || m.x > W + 10 {
+            m.vx = 0 - m.vx
+        }
+        if m.y < H + 20 {
+            am = push(am, m)
+        }
+    }
+    meteors = am
+}
+
+fn updateFoe() {
+    if !foe.active {
+        if frame_t >= next_foe_at {
+            foe.active = true
+            foe.x = 160.0
+            foe.y = 55.0
+            foe.vx = 0.7
+            // tougher each encounter
+            foe.maxhp = 6 + kills / 4
+            if foe.maxhp > 20 {
+                foe.maxhp = 20
+            }
+            foe.hp = foe.maxhp
+            foe.shoot_t = 80
+            print("WARSHIP INCOMING!")
+        }
+        return 0
+    }
+
+    // strafe slowly toward the player's column
+    let dx = (px + 8) - foe.x
+    if dx > 1 {
+        foe.x = foe.x + 0.5
+    }
+    if dx < -1 {
+        foe.x = foe.x - 0.5
+    }
+    if foe.x < 24 { foe.x = 24 }
+    if foe.x > W - 24 { foe.x = W - 24 }
+
+    // bob
+    foe.y = 55.0 + math_sin(frame_t / 30.0) * 8.0
+
+    // fire straight down from its position
+    foe.shoot_t = foe.shoot_t - 1
+    if foe.shoot_t <= 0 {
+        let eb = table{x: foe.x, y: foe.y + 12, vx: 0.0, img: "laser_red.png"}
+        ebullets = push(ebullets, eb)
+        play_sound("hit.wav")
+        foe.shoot_t = 42
+    }
 }
 
 fn updateBullets() {
@@ -346,152 +345,15 @@ fn updateBullets() {
         }
     }
     bullets = ab
-}
 
-fn updateSpawns() {
-    if frame_t % spawn_every == 0 {
-        spawn_enemy()
-    }
-}
-
-fn updateEnemies() {
-    let ae = []
-    for e in enemies {
-        if e.img == "ufo.png" {
-            e.x = e.x + e.vx
-            e.y = e.y + math_sin((frame_t + e.ph) / 24.0) * 0.4
-            let offscreen = e.x < -40 || e.x > W + 40
-            if !offscreen {
-                ae = push(ae, e)
-            }
-        } else {
-            e.y = e.y + e.spd
-            e.x = e.x + math_sin((frame_t + e.ph) / 16.0) * 0.5 + e.vx
-            if e.x < 0 { e.x = 0 }
-            if e.x > W - 18 { e.x = W - 18 }
-            ae = push(ae, e)
+    let aeb = []
+    for eb in ebullets {
+        eb.y = eb.y + 3.2
+        if eb.y < H + 20 {
+            aeb = push(aeb, eb)
         }
     }
-    enemies = ae
-}
-
-fn updateMeteors() {
-    let am = []
-    for m in meteors {
-        m.y = m.y + m.spd
-        m.x = m.x + m.vx
-        m.rot = m.rot + m.vr
-        if m.x < -10 || m.x > W + 10 {
-            m.vx = 0 - m.vx
-        }
-        am = push(am, m)
-    }
-    meteors = am
-}
-
-fn handleHits() {
-    // bullets vs enemies & meteors
-    for b in bullets {
-        for e in enemies {
-            if e.hp > 0 {
-                if rects_overlap(b.x - 2, b.y - 8, 4, 14, e.x + 1, e.y + 1, 16, 16) {
-                    e.hp = e.hp - 1
-                    b.y = -100
-                    if e.hp <= 0 {
-                        score = score + e.pts
-                        kills = kills + 1
-                        boom(e.x + 9, e.y + 9)
-                        burst(e.x + 9, e.y + 9, 8, "#e67e22")
-                        play_sound("explosion.wav")
-                        drop_powerup(e.x + 9, e.y)
-                    }
-                }
-            }
-        }
-        for m in meteors {
-            if m.hp > 0 {
-                if rects_overlap(b.x - 2, b.y - 8, 4, 14, m.x + 1, m.y + 1, 18, 18) {
-                    m.hp = m.hp - 1
-                    b.y = -100
-                    if m.hp <= 0 {
-                        score = score + 20
-                        kills = kills + 1
-                        boom(m.x + 10, m.y + 10)
-                        burst(m.x + 10, m.y + 10, 10, "#a07050")
-                        play_sound("explosion.wav")
-                    }
-                }
-            }
-        }
-    }
-
-    let se = []
-    for e in enemies {
-        if e.hp > 0 {
-            se = push(se, e)
-        }
-    }
-    enemies = se
-    let sm = []
-    for m in meteors {
-        if m.hp > 0 {
-            sm = push(sm, m)
-        }
-    }
-    meteors = sm
-
-    // reach your line or touch you
-    let keep_e = []
-    for e in enemies {
-        let gone = false
-        if e.img != "ufo.png" {
-            if e.y > H - 20 {
-                gone = true
-                if score >= 5 {
-                    score = score - 5
-                }
-            }
-        }
-        if rects_overlap(px + 4, 206, 8, 12, e.x + 1, e.y + 1, 16, 16) {
-            gone = true
-            boom(e.x + 9, e.y + 9)
-            burst(e.x + 9, e.y + 9, 8, "#e74c3c")
-            if shield_t == 0 {
-                hp = hp - 1
-                inv = 60
-                shake_t = 14
-                play_sound("hurt.wav")
-            }
-        }
-        if !gone {
-            keep_e = push(keep_e, e)
-        }
-    }
-    enemies = keep_e
-
-    let keep_m = []
-    for m in meteors {
-        let gone = false
-        if m.y > H - 20 {
-            gone = true
-        }
-        if rects_overlap(px + 4, 206, 8, 12, m.x + 1, m.y + 1, 18, 18) {
-            gone = true
-            boom(m.x + 10, m.y + 10)
-            burst(m.x + 10, m.y + 10, 10, "#a07050")
-            play_sound("explosion.wav")
-            if shield_t == 0 {
-                hp = hp - 1
-                inv = 60
-                shake_t = 14
-                play_sound("hurt.wav")
-            }
-        }
-        if !gone {
-            keep_m = push(keep_m, m)
-        }
-    }
-    meteors = keep_m
+    ebullets = aeb
 }
 
 fn updatePowerups() {
@@ -550,10 +412,124 @@ fn updateFx() {
     parts = apt
 }
 
+fn handleHits() {
+    // player bullets vs meteors
+    for b in bullets {
+        for m in meteors {
+            if m.hp > 0 {
+                if rects_overlap(b.x - 2, b.y - 8, 4, 14, m.x + 1, m.y + 1, 18, 18) {
+                    m.hp = m.hp - 1
+                    b.y = -100
+                    if m.hp <= 0 {
+                        score = score + 20
+                        kills = kills + 1
+                        boom(m.x + 10, m.y + 10)
+                        burst(m.x + 10, m.y + 10, 10, "#a07050")
+                        play_sound("explosion.wav")
+                        if random(1, 6) == 1 {
+                            drop_powerup(m.x + 10, m.y)
+                        }
+                    }
+                }
+            }
+        }
+        // player bullets vs warship
+        if foe.active {
+            if foe.hp > 0 {
+                if rects_overlap(b.x - 2, b.y - 8, 4, 14, foe.x - 14, foe.y - 14, 28, 28) {
+                    foe.hp = foe.hp - 1
+                    b.y = -100
+                    play_sound("hit.wav")
+                    if foe.hp <= 0 {
+                        score = score + 150
+                        kills = kills + 1
+                        boom(foe.x, foe.y)
+                        burst(foe.x, foe.y, 16, "#ff00ff")
+                        shake_t = 12
+                        play_sound("explosion.wav")
+                        drop_powerup(foe.x, foe.y + 10)
+                        foe.active = false
+                        next_foe_at = frame_t + random(600, 1100)
+                    }
+                }
+            }
+        }
+    }
+
+    // player bullets can intercept enemy lasers
+    for b in bullets {
+        for eb in ebullets {
+            if rects_overlap(b.x - 2, b.y - 8, 4, 14, eb.x - 2, eb.y - 6, 4, 12) {
+                b.y = -100
+                eb.y = 999
+                burst(eb.x, eb.y, 3, "#ff2222")
+            }
+        }
+    }
+
+    // meteors hitting the player
+    let keep_m = []
+    for m in meteors {
+        let gone = false
+        if m.y > H - 18 {
+            gone = true
+        }
+        if rects_overlap(px + 4, 206, 8, 12, m.x + 1, m.y + 1, 18, 18) {
+            gone = true
+            boom(m.x + 10, m.y + 10)
+            burst(m.x + 10, m.y + 10, 10, "#a07050")
+            play_sound("explosion.wav")
+            if shield_t == 0 {
+                hp = hp - 1
+                inv = 60
+                shake_t = 14
+                play_sound("hurt.wav")
+            }
+        }
+        if !gone {
+            keep_m = push(keep_m, m)
+        }
+    }
+    meteors = keep_m
+
+    // enemy lasers hitting the player
+    let keep_eb = []
+    for eb in ebullets {
+        let gone = false
+        if rects_overlap(px + 4, 206, 8, 12, eb.x - 2, eb.y - 6, 4, 12) {
+            gone = true
+            burst(eb.x, eb.y, 6, "#ff2222")
+            if shield_t == 0 {
+                hp = hp - 1
+                inv = 60
+                shake_t = 14
+                play_sound("hurt.wav")
+            } else {
+                play_sound("shield_down.wav")
+            }
+        }
+        if !gone {
+            keep_eb = push(keep_eb, eb)
+        }
+    }
+    ebullets = keep_eb
+
+    // warship body touching the player (rare, but possible)
+    if foe.active {
+        if rects_overlap(px + 4, 206, 8, 12, foe.x - 13, foe.y - 13, 26, 26) {
+            if shield_t == 0 {
+                hp = hp - 1
+                inv = 60
+                shake_t = 14
+                play_sound("hurt.wav")
+            }
+        }
+    }
+}
+
 // ---------------- draw ----------------
 
 fn on_draw() {
-    // screen shake: world layer drawn through a jittering camera
     set_camera(math_sin(frame_t * 93.0) * shake_t * 0.6, math_cos(frame_t * 71.0) * shake_t * 0.6)
 
     draw_sprite("background.png", 0, 0)
@@ -567,10 +543,20 @@ fn on_draw() {
         draw_sprite_ex("meteor.png", m.x + 10, m.y + 10, 0.45, m.rot)
     }
 
-    for e in enemies {
-        draw_sprite_ex(e.img, e.x + 9, e.y + 9, 0.22, 180)
+    // warship + its life bar
+    if foe.active {
+        draw_sprite_ex("ufo.png", foe.x, foe.y, 0.38, 180)
+        draw_rect(foe.x - 16, foe.y - 22, 32, 4, "#333333")
+        let w = foe.hp * 30 / foe.maxhp
+        draw_rect(foe.x - 15, foe.y - 21, w, 2, "#e74c3c")
     }
 
+    // enemy lasers
+    for eb in ebullets {
+        draw_sprite_ex(eb.img, eb.x, eb.y, 0.3, 180)
+    }
+
+    // powerups bob gently
     for pu in powerups {
         let pimg = "pu_rapid.png"
         if pu.kind == "twin" {
@@ -582,7 +568,6 @@ fn on_draw() {
         if pu.kind == "heart" {
             pimg = "pu_heart.png"
         }
-        // gentle bob
         draw_sprite_ex(pimg, pu.x, pu.y + math_sin(frame_t / 9.0 + pu.x) * 2.0, 0.45, 0)
     }
 
@@ -600,7 +585,6 @@ fn on_draw() {
         draw_sprite_ex("shield.png", px + 8, 212, 0.22, 0)
     }
 
-    // explosion rings
     for bx in booms {
         let r = bx.t
         draw_circle(bx.x, bx.y, r, "#e67e22")
@@ -610,20 +594,18 @@ fn on_draw() {
         }
     }
 
-    // particles (shrink as they die)
     for p in parts {
         let r = (20 - p.t) / 7
         draw_circle(p.x, p.y, r + 1, p.c)
     }
 
-    // ------- HUD: back to steady camera -------
+    // ------- HUD -------
     set_camera(0, 0)
 
     for i in range(0, hp, 1) {
         draw_sprite_ex("life_icon.png", 266 + i * 17, 13, 0.42, 0)
     }
     draw_text("SCORE ${score}", 8, 24, "#ffffff")
-    draw_text("kills: ${kills}", 8, 38, "#aaaaaa")
 
     let wx = 312
     if weapon == "green" {
@@ -659,17 +641,17 @@ fn on_draw() {
 }
 
 fn menuDraw() {
-    let t1 = "GALAGA DEFENSE"
-    let t2 = "a logos2d game"
+    let t1 = "VOID RUNNER"
+    let t2 = "endless space survival"
     let t3 = "PRESS ENTER TO START"
     draw_text(t1, 160 - text_width(t1) / 2, 70, "#ffffff")
     draw_text(t2, 160 - text_width(t2) / 2, 86, "#7fdbff")
 
-    draw_text("A/D or arrows  move", 96, 120, "#aaaaaa")
-    draw_text("SPACE  fire", 118, 134, "#aaaaaa")
-    draw_text("P pause   M music", 104, 148, "#aaaaaa")
+    draw_text("A/D or arrows  move", 96, 118, "#aaaaaa")
+    draw_text("SPACE  fire", 118, 132, "#aaaaaa")
+    draw_text("P pause   M music", 104, 146, "#aaaaaa")
 
     if frame_t % 60 < 40 {
-        draw_text(t3, 160 - text_width(t3) / 2, 186, "#f1c40f")
+        draw_text(t3, 160 - text_width(t3) / 2, 184, "#f1c40f")
     }
 }

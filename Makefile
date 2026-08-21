@@ -14,10 +14,13 @@ x11:
 run: build
 	./logos2d demo/main.lgs
 
+demo: build
+	./logos2d demo/main.lgs -auto
+
 install: build
 	install -m755 logos2d $(PREFIX)/bin/logos2d
 
 clean:
 	rm -f logos2d
 
-.PHONY: build x11 run install clean
+.PHONY: build x11 run demo install clean

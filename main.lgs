@@ -509,7 +509,7 @@ fn on_draw() {
 
     // ------- HUD -------
     for i in range(0, hp, 1) {
-        draw_sprite_ex("life_icon.png", 288 + i * 13, 12, 0.42, 0)
+        draw_sprite_ex("life_icon.png", 266 + i * 17, 13, 0.42, 0)
     }
     draw_text("SCORE ${score}", 8, 24, "#ffffff")
     draw_text("kills: ${kills}", 8, 38, "#aaaaaa")

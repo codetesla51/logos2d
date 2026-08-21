@@ -21,7 +21,6 @@ fn on_load() {
     preload_sprite("bullet.png")
     preload_sprite("laser_green.png")
     preload_sprite("laser_red.png")
-    preload_sprite("flame.png")
     preload_sprite("speed.png")
     preload_sprite("shield.png")
     preload_sprite("pu_rapid.png")
@@ -488,10 +487,6 @@ fn on_draw() {
     }
 
     // player: damage states by hp, thruster while moving, shield bubble
-    let moving = key_down("left") || key_down("right") || key_down("a") || key_down("d")
-    if moving {
-        draw_sprite_ex("flame.png", px + 8, 228, 0.45, 0)
-    }
     if inv == 0 || frame_t % 8 < 5 {
         draw_sprite_ex("player.png", px + 8, 212, 0.22, 0)
     }

@@ -6,7 +6,6 @@
 // ============================================================
 
 fn on_load() {
-    preload_sprite("background.png")
     preload_sprite("player.png")
     preload_sprite("ufo.png")
     preload_sprite("meteor.png")
@@ -19,6 +18,7 @@ fn on_load() {
     preload_sprite("pu_shield.png")
     preload_sprite("pu_heart.png")
     play_music("music.mp3")
+    initStars()
     print("game loaded")
 }
 
@@ -52,6 +52,44 @@ let meteors = []
 let powerups = []
 let booms = []
 let parts = []
+let stars_far = []
+let stars_near = []
+
+fn initStars() {
+    stars_far = []
+    stars_near = []
+    for i in range(0, 36, 1) {
+        let s = table{x: random(0, W), y: random(0, H), spd: 0.9}
+        stars_far = push(stars_far, s)
+    }
+    for i in range(0, 22, 1) {
+        let s = table{x: random(0, W), y: random(0, H), spd: 2.1}
+        stars_near = push(stars_near, s)
+    }
+}
+
+fn updateStars() {
+    let sf = []
+    for s in stars_far {
+        s.y = s.y + s.spd
+        if s.y > H {
+            s.y = 0
+            s.x = random(0, W)
+        }
+        sf = push(sf, s)
+    }
+    stars_far = sf
+    let sn = []
+    for s in stars_near {
+        s.y = s.y + s.spd
+        if s.y > H {
+            s.y = 0
+            s.x = random(0, W)
+        }
+        sn = push(sn, s)
+    }
+    stars_near = sn
+}
 
 const W = 320
 const H = 240
@@ -82,6 +120,7 @@ fn start_game() {
     foe.hp = 6
     foe.maxhp = 6
     next_foe_at = 480
+    initStars()
     state = "play"
     play_music("music.mp3")
 }
@@ -112,7 +151,7 @@ fn spawn_meteor() {
     let m = table{
         x: random(8, W - 30),
         y: -30,
-        spd: random(4, 9) / 10.0,
+        spd: random(6, 13) / 10.0,
         vx: random(-8, 8) / 10.0,
         rot: random(0, 359),
         vr: random(-3, 3),
@@ -172,6 +211,8 @@ fn on_update(dt) {
             music_on = true
         }
     }
+
+    updateStars()
 
     if state == "menu" {
         if key_pressed("enter") || mouse_pressed("left") || key_pressed("space") {
@@ -270,9 +311,9 @@ fn movePlayer() {
 
 fn updateMeteors() {
     // endless field, density ramps with survival time
-    met_interval = 210 - frame_t / 200
-    if met_interval < 40 {
-        met_interval = 40
+    met_interval = 110 - frame_t / 150
+    if met_interval < 32 {
+        met_interval = 32
     }
     if frame_t % met_interval == 0 {
         spawn_meteor()
@@ -420,6 +461,8 @@ fn handleHits() {
                 if rects_overlap(b.x - 2, b.y - 8, 4, 14, m.x + 1, m.y + 1, 18, 18) {
                     m.hp = m.hp - 1
                     b.y = -100
+                    m.y = m.y - 2
+                    burst(b.x, b.y + 10, 3, "#f1c40f")
                     if m.hp <= 0 {
                         score = score + 20
                         kills = kills + 1
@@ -532,7 +575,13 @@ fn handleHits() {
 fn on_draw() {
     set_camera(math_sin(frame_t * 93.0) * shake_t * 0.6, math_cos(frame_t * 71.0) * shake_t * 0.6)
 
-    draw_sprite("background.png", 0, 0)
+    draw_rect(0, 0, W, H, "#000000")
+    for s in stars_far {
+        draw_rect(s.x, s.y, 1, 2, "#445566")
+    }
+    for s in stars_near {
+        draw_rect(s.x, s.y, 2, 3, "#ddeeff")
+    }
 
     if state == "menu" {
         menuDraw()

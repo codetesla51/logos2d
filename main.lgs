@@ -462,14 +462,8 @@ fn on_draw() {
         draw_sprite_ex("meteor.png", m.x + 10, m.y + 10, 0.45, m.rot)
     }
 
-    // enemies face down; fast divers get speed lines; all get fire06 exhaust
+    // enemies face down, clean
     for e in enemies {
-        if e.img != "ufo.png" {
-            draw_sprite_ex("flame.png", e.x + 9, e.y - 6, 0.5, 180)
-        }
-        if e.img == "enemy.png" {
-            draw_sprite_ex("speed.png", e.x + 9, e.y - 30, 0.4, 180)
-        }
         draw_sprite_ex(e.img, e.x + 9, e.y + 9, 0.22, 180)
     }
 
@@ -496,17 +490,10 @@ fn on_draw() {
     // player: damage states by hp, thruster while moving, shield bubble
     let moving = key_down("left") || key_down("right") || key_down("a") || key_down("d")
     if moving {
-        draw_sprite_ex("flame.png", px + 8, 226, 0.5, 0)
+        draw_sprite_ex("flame.png", px + 8, 228, 0.45, 0)
     }
     if inv == 0 || frame_t % 8 < 5 {
-        let pimg = "player.png"
-        if hp == 2 {
-            pimg = "player_dmg1.png"
-        }
-        if hp <= 1 {
-            pimg = "player_dmg2.png"
-        }
-        draw_sprite_ex(pimg, px + 8, 212, 0.22, 0)
+        draw_sprite_ex("player.png", px + 8, 212, 0.22, 0)
     }
     if cooldown > 5 {
         draw_circle(px + 8, 200, 2, "#f1c40f")

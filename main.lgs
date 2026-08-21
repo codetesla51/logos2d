@@ -123,13 +123,16 @@ fn drop_powerup(x, y) {
     if random(1, 10) > 3 {
         return 0
     }
-    let roll = random(1, 3)
+    let roll = random(1, 4)
     let kind = "rapid"
     if roll == 2 {
         kind = "twin"
     }
     if roll == 3 {
         kind = "shield"
+    }
+    if roll == 4 {
+        kind = "heart"
     }
     let pu = table{x: x, y: y, kind: kind}
     powerups = push(powerups, pu)
@@ -254,7 +257,7 @@ fn on_update(dt) {
     for b in bullets {
         for e in enemies {
             if e.hp > 0 {
-                if rects_overlap(b.x - 2, b.y - 8, 4, 14, e.x + 3, e.y + 3, 12, 12) {
+                if rects_overlap(b.x - 2, b.y - 8, 4, 14, e.x + 4, e.y + 4, 10, 10) {
                     e.hp = e.hp - 1
                     b.y = -100
                     if e.hp <= 0 {
@@ -269,7 +272,7 @@ fn on_update(dt) {
         }
         for m in meteors {
             if m.hp > 0 {
-                if rects_overlap(b.x - 2, b.y - 8, 4, 14, m.x, m.y, 20, 20) {
+                if rects_overlap(b.x - 2, b.y - 8, 4, 14, m.x + 4, m.y + 4, 12, 12) {
                     m.hp = m.hp - 1
                     b.y = -100
                     if m.hp <= 0 {
@@ -305,9 +308,11 @@ fn on_update(dt) {
         let gone = false
         if e.y > H - 34 {
             gone = true
-            score = score - 5
+            if score >= 5 {
+                score = score - 5
+            }
         }
-        if rects_overlap(px, 204, 16, 16, e.x + 3, e.y + 3, 12, 12) {
+        if rects_overlap(px + 1, 205, 14, 14, e.x + 4, e.y + 4, 10, 10) {
             gone = true
             boom(e.x + 9, e.y + 9)
             if shield_t == 0 {
@@ -328,7 +333,7 @@ fn on_update(dt) {
         if m.y > H - 20 {
             gone = true
         }
-        if rects_overlap(px, 204, 16, 16, m.x, m.y, 20, 20) {
+        if rects_overlap(px + 1, 205, 14, 14, m.x + 4, m.y + 4, 12, 12) {
             gone = true
             boom(m.x + 10, m.y + 10)
             play_sound("explosion.wav")
@@ -348,7 +353,7 @@ fn on_update(dt) {
     let ap = []
     for pu in powerups {
         pu.y = pu.y + 1.2
-        let caught = rects_overlap(px, 202, 16, 20, pu.x - 6, pu.y - 6, 12, 12)
+        let caught = rects_overlap(px + 1, 203, 14, 18, pu.x - 5, pu.y - 5, 10, 10)
         if caught {
             play_sound("powerup.wav")
             if pu.kind == "rapid" {
@@ -362,6 +367,12 @@ fn on_update(dt) {
             if pu.kind == "shield" {
                 shield_t = 360
                 play_sound("shield_up.wav")
+            }
+            if pu.kind == "heart" {
+                if hp < 3 {
+                    hp = hp + 1
+                }
+                score = score + 25
             }
         }
         if pu.y < H - 24 && !caught {
@@ -412,8 +423,16 @@ fn on_draw() {
         if pu.kind == "shield" {
             c = "#3498db"
         }
+        if pu.kind == "heart" {
+            c = "#ff6b81"
+        }
         draw_circle(pu.x, pu.y, 5, c)
-        draw_circle(pu.x, pu.y, 2, "#ffffff")
+        if pu.kind == "heart" {
+            draw_rect(pu.x - 3, pu.y - 1, 6, 2, "#ffffff")
+            draw_rect(pu.x - 1, pu.y - 3, 2, 6, "#ffffff")
+        } else {
+            draw_circle(pu.x, pu.y, 2, "#ffffff")
+        }
     }
 
     // bullets with their own colors

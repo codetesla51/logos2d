@@ -473,16 +473,19 @@ fn on_draw() {
     draw_text("SCORE ${score}", 8, 24, "#ffffff")
     draw_text("kills: ${kills}", 8, 38, "#aaaaaa")
 
-    let wl = "gun: standard"
+    // powerup status, small, right side under the hearts
+    let wx = 312
     if weapon == "green" {
-        wl = "gun: RAPID"
+        let l = "RAPID ${weapon_t / 60}"
+        draw_text(l, wx - text_width(l), 26, "#2ecc71")
     }
     if weapon == "red" {
-        wl = "gun: TWIN"
+        let l = "TWIN ${weapon_t / 60}"
+        draw_text(l, wx - text_width(l), 26, "#e74c3c")
     }
-    draw_text(wl, 8, H - 14, "#7fdbff")
     if shield_t > 0 {
-        draw_text("SHIELD ${shield_t / 60}", 110, H - 14, "#3498db")
+        let l = "SHLD ${shield_t / 60}"
+        draw_text(l, wx - text_width(l), 40, "#3498db")
     }
 
     if over {

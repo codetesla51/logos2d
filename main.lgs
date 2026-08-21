@@ -1,0 +1,77 @@
+fn on_load() {
+    print("game loaded")
+}
+
+let player = table{
+    x: 150,
+    y: 110,
+}
+
+let clicks = 0
+
+fn on_update(dt) {
+    // key_down: held state for movement
+    if key_down("right") {
+        player.x = player.x + 2
+    }
+    if key_down("left") {
+        player.x = player.x - 2
+    }
+    if key_down("up") {
+        player.y = player.y - 2
+    }
+    if key_down("down") {
+        player.y = player.y + 2
+    }
+
+    // key_pressed / key_released: edge detection
+    if key_pressed("space") {
+        print("space just pressed")
+    }
+    if key_released("space") {
+        print("space released")
+    }
+
+    // mouse_pos + mouse_pressed
+    let m = mouse_pos()
+    if mouse_pressed("left") {
+        clicks = clicks + 1
+        print("click ${clicks} at ${m.x},${m.y}")
+    }
+
+    // keep player on screen
+    if player.x < 0 { player.x = 0 }
+    if player.x > 308 { player.x = 308 }
+    if player.y < 0 { player.y = 0 }
+    if player.y > 228 { player.y = 228 }
+}
+
+fn on_draw() {
+    // background line (draw_line test)
+    draw_line(0, 230, 320, 10, "#4488ff", 2)
+
+    // draw_rect test: moving player square (arrow keys)
+    draw_rect(player.x, player.y, 12, 12, "#ff3333")
+
+    // static rect
+    draw_rect(20, 20, 40, 16, "#ff8800")
+
+    // draw_circle test
+    draw_circle(160, 60, 18, "#33cc66")
+
+    // draw_text test: live mouse coords + click counter
+    let m = mouse_pos()
+    draw_text("mouse: ${m.x},${m.y}  clicks: ${clicks}", 80, 120, "#ffee44")
+
+    // draw_sprite test
+    draw_sprite("sprite.png", 40, 180)
+
+    // draw_sprite_ex test: scaled x2, rotated 45 degrees (centered on point)
+    draw_sprite_ex("sprite.png", 240, 170, 2.0, 45)
+
+    // mouse_down test: magenta blob follows cursor while holding left button
+    if mouse_down("left") {
+        let m2 = mouse_pos()
+        draw_circle(m2.x, m2.y, 6, "#ff00ff")
+    }
+}

@@ -1,127 +1,305 @@
-fn on_load() {
-    print("game loaded")
+// ============================================================
+// ARENA SHOOTER — logos2d demo game
+// Move: WASD/arrows   Shoot: left click   Music: M   Quit: ESC
+// ============================================================
 
-    // preload test: decode images at load time, not on first draw
-    preload_sprite("walk.png")
-    preload_sprite("sprite.png")
+fn on_load() {
+    // decode everything now instead of mid-gameplay (also reports missing
+    // files immediately — missing assets just warn, game still runs)
+    preload_sprite("player_walk.png")
+    preload_sprite("enemy_walk.png")
+    preload_sprite("bullet.png")
+    print("game loaded")
 }
+
+// ---------------- state ----------------
 
 let player = table{
-    x: 40,
-    y: 100,
+    x: 480.0,
+    y: 320.0,
     anim: 0.0,
     frame: 0,
-    facing: 1
+    moving: false,
 }
 
-// fixed target box to collide with (position randomized per hit)
-let target = table{
-    x: 200,
-    y: 90,
-    w: 50,
-    h: 60,
+let hp = 3
+let score = 0
+let kills = 0
+let inv = 0          // invulnerability frames after taking damage
+let over = false     // game over flag
+let frame_t = 0      // global tick counter
+let spawn_every = 120
+
+let bullets = []
+let enemies = []
+
+const WORLD_W = 960
+const WORLD_H = 640
+
+// ---------------- helpers ----------------
+
+fn spawn_enemy() {
+    // spawn just outside a random arena edge
+    let side = random(0, 3)
+    let e = table{x: 0.0, y: 0.0, hp: 2}
+    if side == 0 {
+        e.x = random(0, WORLD_W)
+        e.y = -20
+    }
+    if side == 1 {
+        e.x = random(0, WORLD_W)
+        e.y = WORLD_H + 20
+    }
+    if side == 2 {
+        e.x = -20
+        e.y = random(0, WORLD_H)
+    }
+    if side == 3 {
+        e.x = WORLD_W + 20
+        e.y = random(0, WORLD_H)
+    }
+    push(enemies, e)
 }
 
-let hits = 0
-let touching = false
-let music_on = false
+fn shoot(tx, ty) {
+    let dx = tx - (player.x + 8)
+    let dy = ty - (player.y + 8)
+    let d = mathSqrt(dx * dx + dy * dy)
+    if d < 1 {
+        return 0
+    }
+    let b = table{
+        x: player.x + 8,
+        y: player.y + 8,
+        vx: dx / d * 6,
+        vy: dy / d * 6,
+        life: 90
+    }
+    push(bullets, b)
+    play_sound("shoot.wav")
+}
+
+fn reset_game() {
+    player.x = 480.0
+    player.y = 320.0
+    hp = 3
+    score = 0
+    kills = 0
+    inv = 0
+    over = false
+    spawn_every = 120
+    bullets = []
+    enemies = []
+}
+
+// ---------------- update ----------------
 
 fn on_update(dt) {
+    frame_t = frame_t + 1
+
+    if over {
+        if key_pressed("enter") {
+            reset_game()
+        }
+        return 0
+    }
+
+    // ---- movement ----
     let moving = false
-
-    if key_down("right") {
-        player.x = player.x + 2
-        player.facing = 1
+    if key_down("right") || key_down("d") {
+        player.x = player.x + 2.4
         moving = true
     }
-    if key_down("left") {
-        player.x = player.x - 2
-        player.facing = -1
+    if key_down("left") || key_down("a") {
+        player.x = player.x - 2.4
         moving = true
     }
-    if key_down("up") {
-        player.y = player.y - 2
+    if key_down("down") || key_down("s") {
+        player.y = player.y + 2.4
         moving = true
     }
-    if key_down("down") {
-        player.y = player.y + 2
+    if key_down("up") || key_down("w") {
+        player.y = player.y - 2.4
         moving = true
     }
 
-    // walking animation: 8 frames/sec while moving, else idle frame 0
+    // keep inside world
+    if player.x < 0 { player.x = 0 }
+    if player.x > WORLD_W - 16 { player.x = WORLD_W - 16 }
+    if player.y < 0 { player.y = 0 }
+    if player.y > WORLD_H - 16 { player.y = WORLD_H - 16 }
+
+    // walk animation: 8 fps while moving
     if moving {
         player.anim = player.anim + dt
-        player.frame = mathFloor(player.anim * 8) % 4
+        player.frame = mathFloor(player.anim * 8) % 6
     } else {
         player.anim = 0.0
         player.frame = 0
     }
 
-    // rects_overlap test — target respawns at a random spot after each hit
-    let now_touching = rects_overlap(player.x, player.y, 16, 16, target.x, target.y, target.w, target.h)
-    if now_touching {
-        if !touching {
-            hits = hits + 1
-            print("HIT #${hits}!")
-            play_sound("beep.wav")
-            target.x = random(60, 900)
-            target.y = random(30, 180)
-        }
-    }
-    touching = now_touching
+    // ---- camera follows player, clamped to world ----
+    let cx = player.x + 8 - 160
+    let cy = player.y + 8 - 120
+    if cx < 0 { cx = 0 }
+    if cx > WORLD_W - 320 { cx = WORLD_W - 320 }
+    if cy < 0 { cy = 0 }
+    if cy > WORLD_H - 240 { cy = WORLD_H - 240 }
+    set_camera(cx, cy)
 
-    // camera follows player horizontally (world is ~1000 wide)
-    set_camera(player.x - 140, 0)
-
-    // music toggle on M
-    if key_pressed("m") {
-        if music_on {
-            stop_music()
-            music_on = false
-            print("music off")
-        } else {
-            play_music("music.wav")
-            music_on = true
-            print("music on")
-        }
-    }
-
-    // quit test: ESC closes the game
-    if key_pressed("escape") {
-        set_title("goodbye!")
-        quit()
-    }
-
+    // ---- shooting: aim at mouse (world coords) ----
     let m = mouse_pos()
     if mouse_pressed("left") {
-        print("click at ${m.x},${m.y}")
+        shoot(m.x + camera_x(), m.y + camera_y())
+    }
+
+    // ---- music toggle ----
+    if key_pressed("m") {
+        play_music("music.mp3")
+    }
+
+    // ---- bullets ----
+    let alive_bullets = []
+    for b in bullets {
+        b.x = b.x + b.vx
+        b.y = b.y + b.vy
+        b.life = b.life - 1
+        let in_world = b.x > -10 && b.x < WORLD_W + 10 && b.y > -10 && b.y < WORLD_H + 10
+        if b.life > 0 && in_world {
+            push(alive_bullets, b)
+        }
+    }
+    bullets = alive_bullets
+
+    // ---- enemy spawning (speeds up as you kill) ----
+    if frame_t % spawn_every == 0 && !over {
+        spawn_enemy()
+        if kills > 0 && kills % 5 == 0 && spawn_every > 40 {
+            spawn_every = spawn_every - 10
+        }
+    }
+
+    // ---- enemies chase player ----
+    let alive_enemies = []
+    for e in enemies {
+        let dx = (player.x + 8) - (e.x + 8)
+        let dy = (player.y + 8) - (e.y + 8)
+        let d = mathSqrt(dx * dx + dy * dy)
+        if d > 1 {
+            let spd = 0.9
+            if d < 200 {
+                spd = 1.4
+            }
+            e.x = e.x + dx / d * spd
+            e.y = e.y + dy / d * spd
+        }
+        push(alive_enemies, e)
+    }
+    enemies = alive_enemies
+
+    // ---- bullet vs enemy collisions ----
+    for b in bullets {
+        for e in enemies {
+            if rects_overlap(b.x - 2, b.y - 2, 4, 4, e.x + 2, e.y + 2, 12, 12) {
+                b.life = 0
+                e.hp = e.hp - 1
+                score = score + 10
+                kills = kills + 1
+                play_sound("hit.wav")
+            }
+        }
+    }
+
+    // drop dead enemies
+    let survivors = []
+    for e in enemies {
+        if e.hp > 0 {
+            push(survivors, e)
+        }
+    }
+    enemies = survivors
+
+    // ---- enemy vs player ----
+    if inv > 0 {
+        inv = inv - 1
+    }
+    for e in enemies {
+        if inv == 0 {
+            if rects_overlap(player.x, player.y, 16, 16, e.x + 2, e.y + 2, 12, 12) {
+                hp = hp - 1
+                inv = 60
+                play_sound("hurt.wav")
+            }
+        }
+    }
+
+    // ---- game over check ----
+    if hp <= 0 {
+        over = true
+        stop_music()
+        print("GAME OVER - score ${score} - press ENTER to restart")
     }
 }
 
+// ---------------- draw ----------------
+
 fn on_draw() {
-    // world layer (affected by camera): long ground so scrolling is visible
-    draw_line(0, 210, 1000, 210, "#5d6d7e", 2)
-    for i in range(0, 1000, 50) {
-        draw_line(i, 210, i - 10, 220, "#34495e", 1)
+    // floor grid (world space)
+    for gx in range(0, WORLD_W, 32) {
+        draw_line(gx, 0, gx, WORLD_H, "#1a2530", 1)
+    }
+    for gy in range(0, WORLD_H, 32) {
+        draw_line(0, gy, WORLD_W, gy, "#1a2530", 1)
+    }
+    // arena border
+    draw_rect(-2, -2, WORLD_W + 4, 2, "#44607a")
+    draw_rect(-2, WORLD_H, WORLD_W + 4, 2, "#44607a")
+    draw_rect(-2, 0, 2, WORLD_H + 2, "#44607a")
+    draw_rect(WORLD_W, 0, 2, WORLD_H + 2, "#44607a")
+
+    // target-style marker on each enemy
+    for e in enemies {
+        draw_rect(e.x + 2, e.y + 2, 12, 12, "#c0392b")
+        draw_sprite_frame("enemy_walk.png", e.x, e.y, 16, 16, frame_t / 8 % 4)
     }
 
-    // target box: green while overlapping, red while separate
-    let c = "#e67e22"
-    if touching {
-        c = "#2ecc71"
+    // bullets
+    for b in bullets {
+        draw_sprite("bullet.png", b.x - 3, b.y - 3)
     }
-    draw_rect(target.x, target.y, target.w, target.h, c)
 
-    // walking character: 4-frame sheet, flipped by facing via scale trick
-    draw_sprite_frame("walk.png", player.x, player.y, 16, 16, player.frame)
+    // player (blink while invulnerable)
+    if inv == 0 || frame_t % 8 < 5 {
+        draw_sprite_frame("player_walk.png", player.x, player.y, 16, 16, player.frame)
+    }
 
-    // status readout (HUD layer: reset camera so it stays on screen)
-    set_camera(0, 0)
-    draw_text("overlap: ${touching}  hits: ${hits}", 80, 12, "#ffffff")
-    draw_text("cam_x: ${camera_x()}  [arrows move, M music, ESC quit]", 20, 228, "#aaaaaa")
-
+    // aim line from player toward mouse
     let m = mouse_pos()
+    let wx = m.x + camera_x()
+    let wy = m.y + camera_y()
+    draw_line(player.x + 8, player.y + 8, wx, wy, "#34495e", 1)
+
+    // ------- HUD (screen space) -------
+    set_camera(0, 0)
+
+    // hearts
+    let hx = 6
+    for i in range(0, hp, 1) {
+        draw_circle(hx + i * 14 + 5, 12, 5, "#e74c3c")
+    }
+
+    draw_text("SCORE ${score}", 250, 6, "#ffffff")
+    draw_text("kills: ${kills}", 250, 18, "#95a5a6")
+    draw_text("mouse: ${m.x},${m.y}", 240, 30, "#556677")
+
     if mouse_down("left") {
-        draw_circle(m.x, m.y, 5, "#ff00ff")
+        draw_circle(m.x, m.y, 4, "#ff00ff")
+    }
+
+    if over {
+        draw_rect(70, 90, 180, 60, "#000000")
+        draw_text("GAME OVER", 118, 108, "#e74c3c")
+        draw_text("final score: ${score}", 105, 124, "#ffffff")
+        draw_text("press ENTER to restart", 92, 138, "#95a5a6")
     }
 }

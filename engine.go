@@ -54,6 +54,7 @@ type Game struct {
 	camX, camY           float64
 	audioCtx             *audio.Context
 	sfxPCM               map[string][]byte // decoded sound effects by path
+	failedAudio          map[string]bool   // audio paths that failed to load (warn once)
 	musicPlayer          *audio.Player
 	scriptMod            time.Time // main.lgs mtime for hot reload
 }
@@ -68,8 +69,9 @@ func newGame(vm *logos.VM) *Game {
 		keysPrev:  map[ebiten.Key]bool{},
 		mouseCurr: map[ebiten.MouseButton]bool{},
 		mousePrev: map[ebiten.MouseButton]bool{},
-		audioCtx:  audio.NewContext(44100),
-		sfxPCM:    map[string][]byte{},
+		audioCtx:    audio.NewContext(44100),
+		sfxPCM:      map[string][]byte{},
+		failedAudio: map[string]bool{},
 	}
 	if st, err := os.Stat("main.lgs"); err == nil {
 		g.scriptMod = st.ModTime()
@@ -197,6 +199,10 @@ func (g *Game) loadAudio(path string) ([]byte, error) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
+		if !g.failedAudio[path] {
+			fmt.Println("audio:", err)
+			g.failedAudio[path] = true
+		}
 		return nil, err
 	}
 	defer f.Close()

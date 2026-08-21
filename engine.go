@@ -38,6 +38,7 @@ type drawCmd struct {
 	x2, y2            float64
 	radius, thickness float64
 	scale, rotation   float64 // rotation in degrees
+	camX, camY        float64 // camera snapshot taken when the cmd was queued
 	str, path         string
 	color             string
 }
@@ -61,14 +62,14 @@ type Game struct {
 
 func newGame(vm *logos.VM) *Game {
 	g := &Game{
-		vm:        vm,
-		sprites:   map[string]*ebiten.Image{},
-		failed:    map[string]bool{},
-		face:      loadFont(),
-		keysCurr:  map[ebiten.Key]bool{},
-		keysPrev:  map[ebiten.Key]bool{},
-		mouseCurr: map[ebiten.MouseButton]bool{},
-		mousePrev: map[ebiten.MouseButton]bool{},
+		vm:          vm,
+		sprites:     map[string]*ebiten.Image{},
+		failed:      map[string]bool{},
+		face:        loadFont(),
+		keysCurr:    map[ebiten.Key]bool{},
+		keysPrev:    map[ebiten.Key]bool{},
+		mouseCurr:   map[ebiten.MouseButton]bool{},
+		mousePrev:   map[ebiten.MouseButton]bool{},
 		audioCtx:    audio.NewContext(44100),
 		sfxPCM:      map[string][]byte{},
 		failedAudio: map[string]bool{},
@@ -299,12 +300,14 @@ func (g *Game) Update() error {
 
 func (g *Game) Draw(screen *ebiten.Image) {
 	g.cmds = g.cmds[:0] // reset queue; on_draw refills it via draw_* builtins
-	g.vm.Call("on_draw")
+	callScript(g.vm, "on_draw")
+
 
 	for _, c := range g.cmds {
-		// world-space: every command is drawn relative to the camera
-		wx := c.x - g.camX
-		wy := c.y - g.camY
+		// world-space: every command is drawn relative to ITS camera snapshot,
+		// so scripts can switch cameras mid-draw (e.g. HUD after world)
+		wx := c.x - c.camX
+		wy := c.y - c.camY
 
 		// sprites carry no color; default to white rather than parsing ""
 		clr := color.RGBA{R: 255, G: 255, B: 255, A: 255}
@@ -317,7 +320,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		case "circle":
 			vector.DrawFilledCircle(screen, float32(wx), float32(wy), float32(c.radius), clr, false)
 		case "line":
-			vector.StrokeLine(screen, float32(wx), float32(wy), float32(c.x2-g.camX), float32(c.y2-g.camY), float32(c.thickness), clr, false)
+			vector.StrokeLine(screen, float32(wx), float32(wy), float32(c.x2-c.camX), float32(c.y2-c.camY), float32(c.thickness), clr, false)
 		case "text":
 			if g.face == nil {
 				continue

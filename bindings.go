@@ -34,6 +34,7 @@ func parseMouseButton(name string) (ebiten.MouseButton, bool) {
 func registerBindings(vm *logos.VM, g *Game) {
 	vm.Register("draw_rect", func(args ...logos.Object) logos.Object {
 		g.cmds = append(g.cmds, drawCmd{
+			camX: g.camX, camY: g.camY,
 			kind: "rect",
 			x:    float64(toI(args[0])), y: float64(toI(args[1])),
 			w: float64(toI(args[2])), h: float64(toI(args[3])),
@@ -44,6 +45,7 @@ func registerBindings(vm *logos.VM, g *Game) {
 
 	vm.Register("draw_circle", func(args ...logos.Object) logos.Object {
 		g.cmds = append(g.cmds, drawCmd{
+			camX: g.camX, camY: g.camY,
 			kind: "circle",
 			x:    float64(toI(args[0])), y: float64(toI(args[1])),
 			radius: toF(args[2]),
@@ -54,6 +56,7 @@ func registerBindings(vm *logos.VM, g *Game) {
 
 	vm.Register("draw_line", func(args ...logos.Object) logos.Object {
 		g.cmds = append(g.cmds, drawCmd{
+			camX: g.camX, camY: g.camY,
 			kind: "line",
 			x:    float64(toI(args[0])), y: float64(toI(args[1])),
 			x2: float64(toI(args[2])), y2: float64(toI(args[3])),
@@ -65,6 +68,7 @@ func registerBindings(vm *logos.VM, g *Game) {
 
 	vm.Register("draw_text", func(args ...logos.Object) logos.Object {
 		g.cmds = append(g.cmds, drawCmd{
+			camX: g.camX, camY: g.camY,
 			kind: "text",
 			str:  args[0].(*logos.String).Value,
 			x:    float64(toI(args[1])), y: float64(toI(args[2])),
@@ -75,6 +79,7 @@ func registerBindings(vm *logos.VM, g *Game) {
 
 	vm.Register("draw_sprite", func(args ...logos.Object) logos.Object {
 		g.cmds = append(g.cmds, drawCmd{
+			camX: g.camX, camY: g.camY,
 			kind: "sprite",
 			path: args[0].(*logos.String).Value,
 			x:    float64(toI(args[1])), y: float64(toI(args[2])),
@@ -84,6 +89,7 @@ func registerBindings(vm *logos.VM, g *Game) {
 
 	vm.Register("draw_sprite_ex", func(args ...logos.Object) logos.Object {
 		g.cmds = append(g.cmds, drawCmd{
+			camX: g.camX, camY: g.camY,
 			kind: "sprite_ex",
 			path: args[0].(*logos.String).Value,
 			x:    float64(toI(args[1])), y: float64(toI(args[2])),
@@ -157,6 +163,7 @@ func registerBindings(vm *logos.VM, g *Game) {
 	// draw_sprite_frame draws frame `index` from a horizontal-strip sheet.
 	vm.Register("draw_sprite_frame", func(args ...logos.Object) logos.Object {
 		g.cmds = append(g.cmds, drawCmd{
+			camX: g.camX, camY: g.camY,
 			kind: "sprite_frame",
 			path: args[0].(*logos.String).Value,
 			x:    float64(toI(args[1])), y: float64(toI(args[2])),

@@ -56,7 +56,7 @@ fn spawn_enemy() {
         e.x = WORLD_W + 20
         e.y = random(0, WORLD_H)
     }
-    push(enemies, e)
+    enemies = push(enemies, e)
 }
 
 fn shoot(tx, ty) {
@@ -75,7 +75,7 @@ fn shoot(tx, ty) {
         vy: dy / d * 6,
         life: 90
     }
-    push(bullets, b)
+    bullets = push(bullets, b)
     play_sound("shoot.wav")
 }
 
@@ -155,7 +155,7 @@ fn on_update(dt) {
         b.life = b.life - 1
         let in_world = b.x > -10 && b.x < WORLD_W + 10 && b.y > -10 && b.y < WORLD_H + 10
         if b.life > 0 && in_world {
-            push(alive_bullets, b)
+            alive_bullets = push(alive_bullets, b)
         }
     }
     bullets = alive_bullets
@@ -183,7 +183,7 @@ fn on_update(dt) {
             e.y = e.y + dy / d * spd
             e.ang = atan2(dy, dx)
         }
-        push(alive_enemies, e)
+        alive_enemies = push(alive_enemies, e)
     }
     enemies = alive_enemies
 
@@ -204,7 +204,7 @@ fn on_update(dt) {
     let survivors = []
     for e in enemies {
         if e.hp > 0 {
-            push(survivors, e)
+            survivors = push(survivors, e)
         }
     }
     enemies = survivors
@@ -234,7 +234,6 @@ fn on_update(dt) {
 // ---------------- draw ----------------
 
 fn on_draw() {
-    // starfield spans the whole world
     draw_sprite("stars.png", 0, 0)
 
     // arena border
@@ -243,22 +242,18 @@ fn on_draw() {
     draw_rect(-2, 0, 2, WORLD_H + 2, "#44607a")
     draw_rect(WORLD_W, 0, 2, WORLD_H + 2, "#44607a")
 
-    // enemies (ships point up natively -> rotate ang+90)
     for e in enemies {
         draw_sprite_ex("enemy.png", e.x + 9, e.y + 9, 0.22, e.ang + 90)
     }
 
-    // bullets (bolt is vertical natively -> rotate velocity angle+90)
     for b in bullets {
         draw_sprite_ex("bullet.png", b.x, b.y, 0.35, atan2(b.vy, b.vx) + 90)
     }
 
-    // player ship (blink while invulnerable)
     if inv == 0 || frame_t % 8 < 5 {
         draw_sprite_ex("player.png", player.x + 8, player.y + 8, 0.22, player.ang + 90)
     }
 
-    // aim line from ship toward mouse
     let m = mouse_pos()
     let wx = m.x + camera_x()
     let wy = m.y + camera_y()

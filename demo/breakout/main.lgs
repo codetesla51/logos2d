@@ -502,6 +502,46 @@ fn draw_centered(str, y, c) {
     draw_text(str, x, y, c)
 }
 
+// title text with a 1px drop shadow so it pops off the dark background
+fn draw_title(str, y, c) {
+    let x = (W - text_width(str)) / 2
+    if x < 4 {
+        x = 4
+    }
+    draw_text(str, x + 1, y + 1, "#000000")
+    draw_text(str, x, y, c)
+}
+
+// wrap a string to the logical width and draw each line centered.
+// guarantees nothing spills past the left/right edges.
+fn draw_wrapped(str, y, c) {
+    let words = split(str, " ")
+    let line = ""
+    let yy = y
+    for w in words {
+        let trial = line == "" ? w : line + " " + w
+        if text_width(trial) > W - 8 && line != "" {
+            let lx = (W - text_width(line)) / 2
+            if lx < 4 { lx = 4 }
+            draw_text(line, lx, yy, c)
+            yy = yy + 14
+            line = w
+        } else {
+            line = trial
+        }
+    }
+    if line != "" {
+        let lx = (W - text_width(line)) / 2
+        if lx < 4 { lx = 4 }
+        draw_text(line, lx, yy, c)
+    }
+}
+
+// blinking prompt: visible ~70% of the time
+fn blink() {
+    return (gt % 60) < 42
+}
+
 fn panel(x, y, w, h) {
     draw_rect(x - 2, y - 2, w + 4, h + 4, "#f1c40f")
     draw_rect(x, y, w, h, "#12161f")
@@ -592,20 +632,28 @@ fn on_draw_front() {
         }
     }
     if state == "menu" {
-        panel(60, 84, 200, 72)
-        draw_centered("BREAKOUT", 100, "#f1c40f")
-        draw_centered("ENTER TO START", 124, "#e8ecf2")
+        panel(40, 70, 240, 112)
+        draw_title("BREAKOUT", 86, "#f1c40f")
+        draw_centered("a logos2d brick-breaker", 104, "#7f8fa3")
+        if blink() {
+            draw_centered("PRESS ENTER TO PLAY", 138, "#e8ecf2")
+        }
+        draw_wrapped("MOVE:  ← →     LAUNCH:  SPACE     CATCH THE FALLING POWER-UPS", 172, "#9fb3c8")
     }
     if state == "over" {
-        panel(70, 88, 180, 64)
-        draw_centered("GAME OVER", 100, "#e74c3c")
-        draw_centered("SCORE ${score}", 116, "#e8ecf2")
-        draw_centered("ENTER TO RETRY", 132, "#e8ecf2")
+        panel(60, 80, 200, 80)
+        draw_title("GAME OVER", 96, "#e74c3c")
+        draw_centered("SCORE ${score}", 118, "#e8ecf2")
+        if blink() {
+            draw_centered("ENTER TO RETRY", 140, "#e8ecf2")
+        }
     }
     if state == "win" {
-        panel(70, 88, 180, 64)
-        draw_centered("LEVEL ${level} CLEAR!", 100, "#2ecc71")
+        panel(60, 76, 200, 88)
+        draw_title("LEVEL ${level} CLEAR!", 92, "#2ecc71")
         draw_centered("SCORE ${score}", 116, "#e8ecf2")
-        draw_centered("ENTER FOR LEVEL ${level + 1}", 132, "#e8ecf2")
+        if blink() {
+            draw_centered("ENTER FOR LEVEL ${level + 1}", 138, "#e8ecf2")
+        }
     }
 }

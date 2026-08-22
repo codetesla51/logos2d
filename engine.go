@@ -52,8 +52,9 @@ type Game struct {
 	world                World
 	cmds                 []drawCmd
 	sprites              map[string]*ebiten.Image
-	failed               map[string]bool // sprite paths that failed to load (warn once)
-	face                 font.Face
+	failed               map[string]bool // failed loads (sprites/fonts), warn once
+	face                 font.Face       // active face for draw_text/text_width
+	faces                map[string]font.Face // loaded faces by path+size
 	keysCurr, keysPrev   map[ebiten.Key]bool
 	mouseCurr, mousePrev map[ebiten.MouseButton]bool
 	quitRequested        bool
@@ -77,7 +78,7 @@ func newGame(vm *interpreter.Interpreter) *Game {
 		world:       *newWorld(),
 		sprites:     map[string]*ebiten.Image{},
 		failed:      map[string]bool{},
-		face:        loadFont(),
+		faces:       map[string]font.Face{},
 		keysCurr:    map[ebiten.Key]bool{},
 		keysPrev:    map[ebiten.Key]bool{},
 		mouseCurr:   map[ebiten.MouseButton]bool{},
@@ -121,32 +122,45 @@ func toI(o logos.Object) int64 {
 	return int64(toF(o))
 }
 
-// loadFont tries common system font locations; returns nil if none found.
-func loadFont() font.Face {
-	// project-local arcade font wins if present
-	candidates := []string{
-		"kenvector_future.ttf",
-		"/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
-		"/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-		"/usr/share/fonts/TTF/DejaVuSans.ttf",
-		"/usr/share/fonts/dejavu/DejaVuSans.ttf",
+// fontFace loads a TTF at a pixel size, cached per path+size. On success
+// it becomes the active face for draw_text/text_width. There is NO default
+// font: scripts opt in via load_font(path, size); until one loads, text is
+// skipped and text_width returns 0.
+func (g *Game) fontFace(path string, size int) font.Face {
+	if size <= 0 {
+		size = 12
 	}
-	for _, p := range candidates {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		ft, err := opentype.Parse(b)
-		if err != nil {
-			continue
-		}
-		face, err := opentype.NewFace(ft, &opentype.FaceOptions{Size: 12, DPI: 72, Hinting: font.HintingFull})
-		if err != nil {
-			continue
-		}
-		return face
+	key := fmt.Sprintf("%s\x00%d", path, size)
+	if f, ok := g.faces[key]; ok {
+		g.face = f
+		return f
 	}
-	return nil
+	b, err := os.ReadFile(path)
+	if err != nil {
+		g.warnFontOnce(path, err)
+		return nil
+	}
+	ft, err := opentype.Parse(b)
+	if err != nil {
+		g.warnFontOnce(path, err)
+		return nil
+	}
+	face, err := opentype.NewFace(ft, &opentype.FaceOptions{Size: float64(size), DPI: 72, Hinting: font.HintingFull})
+	if err != nil {
+		g.warnFontOnce(path, err)
+		return nil
+	}
+	g.faces[key] = face
+	g.face = face
+	return face
+}
+
+func (g *Game) warnFontOnce(path string, err error) {
+	key := "font:" + path
+	if !g.failed[key] {
+		g.failed[key] = true
+		fmt.Println("load_font: failed to load", path, "-", err)
+	}
 }
 
 // sprite loads and caches an image by path; warns once on failure.

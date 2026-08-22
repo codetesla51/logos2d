@@ -657,6 +657,13 @@ func registerBindings(vm *interpreter.Interpreter, g *Game) {
 		return &logos.Float{Value: math.Cos(toF(args[0]))}
 	})
 
+	vm.Register("load_font", func(args ...logos.Object) logos.Object {
+		// load a TTF at a pixel size and make it the active face for
+		// draw_text/text_width. Cached per path+size; returns success.
+		path := args[0].(*logos.String).Value
+		return &logos.Bool{Value: g.fontFace(path, int(toF(args[1]))) != nil}
+	})
+
 	vm.Register("text_width", func(args ...logos.Object) logos.Object {
 		// pixel width of a string in the current font (for centering)
 		if g.face == nil {

@@ -228,9 +228,10 @@ first when someone is playing.
   decoded on a background goroutine after the first tick, so calling it from
   `on_load` is safe. Formats: `.wav` / `.ogg` / `.mp3` (OGG recommended — small
   on disk, native decode).
-- **Font**: project-local `kenvector_future.ttf` wins; else a system sans
-  fallback. If no font is found, `draw_text` is skipped (warned once). Use
-  `text_width()` to center text.
+- **Font**: none by default. Scripts opt in with `load_font(path, size)`
+  (TTF, cached per path+size; becomes the active face for `draw_text` and
+  `text_width`). Until one loads, `draw_text` is skipped and `text_width`
+  returns 0. Use `text_width()` to center text.
 - **Sandbox**: the VM has file I/O, network, shell, and `exit` disabled. Scripts
   cannot touch the filesystem or spawn processes — only the registered builtins.
 - **Entities are auto-drawn** by `drawEntities()`. To hide one without killing
@@ -315,6 +316,7 @@ Keyboard names: `right`, `left`, `up`, `down`, `space`, `enter`, `escape`, `tab`
 | `point_in_rect` | `(px, py, x, y, w, h) -> bool` | Point inside AABB (top-left `x,y`). |
 | `rects_overlap` | `(x1,y1,w1,h1, x2,y2,w2,h2) -> bool` | AABB overlap test. |
 | `text_width` | `(str) -> int` | Pixel width of `str` in the current font (for centering). |
+| `load_font` | `(path, size) -> bool` | Load a TTF at pixel `size`, cached per path+size; becomes the active face for `draw_text`/`text_width`. Call in `on_load`. |
 | `len` | `(array|str|table) -> int` | Element/char/pair count. |
 
 ### Entity system (ECS)

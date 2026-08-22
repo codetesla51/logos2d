@@ -181,6 +181,7 @@ fn start_game() {
 }
 
 fn on_load() {
+    load_font("kenvector_future.ttf", 12)
     preload_sprite("player.png")
     preload_sprite("meteor.png")
     preload_sprite("bullet.png")

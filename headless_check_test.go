@@ -15,6 +15,16 @@ func TestHeadlessBreakout(t *testing.T) {
 	headless(t, "demo/breakout")
 }
 
+// TestHeadlessBreakoutAuto enables the autopilot bot (-auto) so the bot's
+// runtime path (ai_steer / ai_predict_x, auto-launch, auto level/retry)
+// is actually exercised, not just parsed.
+func TestHeadlessBreakoutAuto(t *testing.T) {
+	old := os.Args
+	os.Args = []string{"logos2d", "-auto"}
+	defer func() { os.Args = old }()
+	headless(t, "demo/breakout")
+}
+
 func headless(t *testing.T, dir string) {
 	t.Helper()
 	wd, _ := os.Getwd()

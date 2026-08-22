@@ -106,6 +106,12 @@ randomized layouts every level, and level progression.
 | `←` / `→` or `A` / `D` | move paddle |
 | `SPACE` | launch the served ball |
 | `ENTER` | start / restart, or advance to the next level after a win |
+| `B` | toggle autopilot bot (also enabled with `-auto`) |
+
+The autopilot mirrors VOID RUNNER's bot: it tracks the lowest ball, predicts
+where it will cross the paddle line (folding wall bounces), and steers under
+it — auto-launching, clearing levels, and retrying on game over. Run
+`go run . demo/breakout/main.lgs -auto` to watch it play itself.
 
 Bricks are randomized per level; **star bricks** drop one of four pickups that
 fall for the paddle to catch:

@@ -771,23 +771,8 @@ fn any_attached() {
     return out
 }
 
-fn draw_special_markers() {
-    for bid in group_ids("bricks") {
-        if ent_get(bid, "pu") {
-            let x = ent_get(bid, "x")
-            let y = ent_get(bid, "y")
-            let p = 13
-            draw_line(x - p, y - p, x + p, y - p, "#ffe082", 2)
-            draw_line(x + p, y - p, x + p, y + p, "#ffe082", 2)
-            draw_line(x + p, y + p, x - p, y + p, "#ffe082", 2)
-            draw_line(x - p, y + p, x - p, y - p, "#ffe082", 2)
-        }
-    }
-}
-
 fn on_draw_front() {
     if state == "play" || state == "over" || state == "win" {
-        draw_special_markers()
         let lv = "LEVEL ${level}"
         draw_text(lv, (W - text_width(lv)) / 2, 8, "#7fdbff")
         draw_text("SCORE ${score}", 8, 8, "#e8ecf2")

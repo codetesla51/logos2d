@@ -658,7 +658,6 @@ fn spawn_ship() {
     let ssc = 0.34
     let kind = "gunner"
     let fire = 90
-    let track = 0.3
     let hy = 40 + random(0, 70)
     let bw = 34
     let bh = 32
@@ -675,7 +674,6 @@ fn spawn_ship() {
         ssc = 0.198
         kind = "hunter"
         fire = 55
-        track = 0.9
         hy = 55 + random(0, 60)
         bh = 30
     }
@@ -690,75 +688,84 @@ fn spawn_ship() {
               hp: 3, max_hp: 3,
               kind: kind,
               hover: hy,
-              track: track,
               fire: fire,
               phase: random(0, 100) / 10.0,
               strafe: (random(0, 1) == 0 ? -1 : 1),
               shoot_t: 30 + random(0, 40)
           })
     ent_on_tick(sid, fn(id) {
+        // all movement goes through the AI primitives: nearest() picks the
+        // target, seek() steers toward this personality's chosen point.
+        let kind = ent_get(id, "kind")
+        let x = ent_get(id, "x")
         let y = ent_get(id, "y")
         let hy = ent_get(id, "hover")
-        if y < hy - 0.5 {
-            // still easing down into position (smooth, not a fixed step)
-            ent_set(id, "y", y + (hy - y) * 0.08)
+        let ph = ent_get(id, "phase")
+        let tid = nearest("player", x, y)
+        let px = ent_get(tid, "x")
+        let tx = x
+        let ty = hy
+        let spd = 1.2
+        if kind == "weaver" {
+            // patrol its own sine wave — seek chases the moving point
+            tx = (W / 2) + math_sin(frame_t / 90.0 + ph) * (W / 2 - 20)
+            spd = 2.0
         } else {
-            let kind = ent_get(id, "kind")
-            let x = ent_get(id, "x")
-            let px = ent_get(pid, "x")
-            let target = x
-            if kind == "weaver" {
-                // patrols on its own sine wave — smooth, never snaps
-                let ph = ent_get(id, "phase")
-                target = (W / 2) + math_sin(frame_t / 90.0 + ph) * (W / 2 - 20)
+            if kind == "hunter" {
+                // homes in hard on your column
+                tx = px
+                spd = 2.6
             } else {
-                // gunner + hunter ease toward your column (hunter harder)
-                let tk = ent_get(id, "track")
-                target = x + (px - x) * tk
+                // gunner: patient slide to line up on you
+                tx = px
+                spd = 1.1
             }
-            if target < 14 {
-                target = 14
-            }
-            if target > W - 14 {
-                target = W - 14
-            }
-            // smooth horizontal glide
-            ent_set(id, "x", x + (target - x) * 0.06)
-            // gentle, per-ship bob so they don't look stiff
-            let ph = ent_get(id, "phase")
-            ent_set(id, "y", hy + math_sin(frame_t / 40.0 + ph) * 5.0)
-            let st = ent_get(id, "shoot_t") - 1
-            if st <= 0 {
-                let aim = 0.0
-                if kind == "gunner" {
-                    aim = (px - x) * 0.02
-                }
-                if kind == "hunter" {
-                    aim = (px - x) * 0.04
-                }
-                if kind == "weaver" {
-                    aim = (random(0, 1) == 0 ? -1 : 1) * random(0, 10) / 10.0
-                }
-                if aim > 1.8 {
-                    aim = 1.8
-                }
-                if aim < -1.8 {
-                    aim = -1.8
-                }
-                let vy = 3.0
-                if kind == "hunter" {
-                    vy = 3.6
-                }
-                vy = vy * diff()
-                if vy > 7.0 {
-                    vy = 7.0
-                }
-                create("ebullets", "laser_red.png", ent_get(id, "x"), ent_get(id, "y") + 10, table{vx: aim, vy: vy, rot: 180, scale: 0.35, w: 3, h: 8})
-                play_sound("efire.wav")
-                st = ent_get(id, "fire") + random(0, 30)
-            }
-            ent_set(id, "shoot_t", st)
         }
+        if tx < 14 {
+            tx = 14
+        }
+        if tx > W - 14 {
+            tx = W - 14
+        }
+        if y < hy - 0.5 {
+            // still easing down into station
+            spd = 2.0
+        } else {
+            // gentle, per-ship bob baked into the point the AI chases
+            ty = hy + math_sin(frame_t / 40.0 + ph) * 5.0
+        }
+        seek(id, tx, ty, spd)
+        let st = ent_get(id, "shoot_t") - 1
+        if st <= 0 {
+            let aim = 0.0
+            if kind == "gunner" {
+                aim = (px - x) * 0.02
+            }
+            if kind == "hunter" {
+                aim = (px - x) * 0.04
+            }
+            if kind == "weaver" {
+                aim = (random(0, 1) == 0 ? -1 : 1) * random(0, 10) / 10.0
+            }
+            if aim > 1.8 {
+                aim = 1.8
+            }
+            if aim < -1.8 {
+                aim = -1.8
+            }
+            let vy = 3.0
+            if kind == "hunter" {
+                vy = 3.6
+            }
+            vy = vy * diff()
+            if vy > 7.0 {
+                vy = 7.0
+            }
+            create("ebullets", "laser_red.png", ent_get(id, "x"), ent_get(id, "y") + 10, table{vx: aim, vy: vy, rot: 180, scale: 0.35, w: 3, h: 8})
+            play_sound("efire.wav")
+            st = ent_get(id, "fire") + random(0, 30)
+        }
+        ent_set(id, "shoot_t", st)
     })
     on_death(sid, fn(id) {
         explode_at(ent_get(id, "x"), ent_get(id, "y"), "#e74c3c")
@@ -781,40 +788,36 @@ fn spawn_boss() {
           })
     hp_bar(bid, 0, -64, 84)
     ent_on_tick(bid, fn(id) {
-        let y = ent_get(id, "y")
+        // boss steering is pure AI too: chase the sweeping point; seek
+        // handles both the entry glide and the side-to-side patrol
         let hy = 54
-        if y < hy {
-            ent_set(id, "y", y + 1.0)
-        } else {
-            // sweep side to side
-            let nx = (W / 2) + math_sin(frame_t / 55.0) * (W / 2 - 55)
-            ent_set(id, "x", nx)
-            let hpnow = ent_get(id, "hp")
-            let enraged = hpnow < BOSS_HP / 2
-            let st = ent_get(id, "shoot_t") - 1
-            if st <= 0 {
-                let x = ent_get(id, "x")
-                let y2 = ent_get(id, "y")
-                let px = ent_get(pid, "x")
-                let aim = (px - x) * 0.02
-                if aim > 1.4 {
-                    aim = 1.4
-                }
-                if aim < -1.4 {
-                    aim = -1.4
-                }
-                // aimed shot down the player's column
-                create("ebullets", "laser_red.png", x, y2 + 24, table{vx: aim, vy: 3.2, rot: 180, scale: 0.42, w: 4, h: 9})
-                // enraged: also spit a 3-way spread
-                if enraged {
-                    create("ebullets", "laser_red.png", x - 16, y2 + 24, table{vx: aim - 0.7, vy: 3.2, rot: 180, scale: 0.42, w: 4, h: 9})
-                    create("ebullets", "laser_red.png", x + 16, y2 + 24, table{vx: aim + 0.7, vy: 3.2, rot: 180, scale: 0.42, w: 4, h: 9})
-                }
-                play_sound("efire.wav")
-                st = enraged ? 38 : 64
+        let nx = (W / 2) + math_sin(frame_t / 55.0) * (W / 2 - 55)
+        seek(id, nx, hy, 4.0)
+        let hpnow = ent_get(id, "hp")
+        let enraged = hpnow < BOSS_HP / 2
+        let st = ent_get(id, "shoot_t") - 1
+        if st <= 0 {
+            let x = ent_get(id, "x")
+            let y2 = ent_get(id, "y")
+            let px = ent_get(pid, "x")
+            let aim = (px - x) * 0.02
+            if aim > 1.4 {
+                aim = 1.4
             }
-            ent_set(id, "shoot_t", st)
+            if aim < -1.4 {
+                aim = -1.4
+            }
+            // aimed shot down the player's column
+            create("ebullets", "laser_red.png", x, y2 + 24, table{vx: aim, vy: 3.2, rot: 180, scale: 0.42, w: 4, h: 9})
+            // enraged: also spit a 3-way spread
+            if enraged {
+                create("ebullets", "laser_red.png", x - 16, y2 + 24, table{vx: aim - 0.7, vy: 3.2, rot: 180, scale: 0.42, w: 4, h: 9})
+                create("ebullets", "laser_red.png", x + 16, y2 + 24, table{vx: aim + 0.7, vy: 3.2, rot: 180, scale: 0.42, w: 4, h: 9})
+            }
+            play_sound("efire.wav")
+            st = enraged ? 38 : 64
         }
+        ent_set(id, "shoot_t", st)
     })
     on_death(bid, fn(id) {
         let x = ent_get(id, "x")

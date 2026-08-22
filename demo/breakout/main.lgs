@@ -215,7 +215,7 @@ fn make_brick(cell, kind) {
         if kind == "power" { icon = "pu_rocket.png" }
         if kind == "color" { icon = "pu_color.png" }
         let iid = create("fx", icon, ent_get(bid, "x"), ent_get(bid, "y"), table{
-            scale: 0.42, spin: 6, ttl: -1
+            scale: 0.18, spin: 6, ttl: -1
         })
         ent_set(bid, "icon", iid)
     }
@@ -291,7 +291,7 @@ fn drop_pickup(x, y, kind) {
         img = "pu_color.png"
     }
     create("pickups", img, x, y, table{
-        vy: 1.1, spin: 5, scale: 0.1, w: 10, h: 10, kind: kind
+        vy: 1.1, spin: 5, scale: 0.3, w: 10, h: 10, kind: kind
     })
 }
 
@@ -776,7 +776,7 @@ fn draw_special_markers() {
         if ent_get(bid, "pu") {
             let x = ent_get(bid, "x")
             let y = ent_get(bid, "y")
-            let p = 12 + (gt % 30) / 10
+            let p = 13
             draw_line(x - p, y - p, x + p, y - p, "#ffe082", 2)
             draw_line(x + p, y - p, x + p, y + p, "#ffe082", 2)
             draw_line(x + p, y + p, x - p, y + p, "#ffe082", 2)

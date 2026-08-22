@@ -232,6 +232,7 @@ fn draw_centered(str, y, c) {
 
 fn on_load() {
     load_font_asset()
+    play_music("music.ogg")
     preload_sprite("paddleBlu.png")
     preload_sprite("ballGrey.png")
     preload_sprite("particleStar.png")

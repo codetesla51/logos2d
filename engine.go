@@ -18,6 +18,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/audio/mp3"
+	"github.com/hajimehoshi/ebiten/v2/audio/vorbis"
 	"github.com/hajimehoshi/ebiten/v2/audio/wav"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/text"
@@ -203,7 +204,7 @@ func (g *Game) mousePressed(b ebiten.MouseButton) bool {
 	return g.mouseCurr[b] && !g.mousePrev[b]
 }
 
-// loadAudio decodes a .wav/.mp3 file into raw PCM bytes, cached by path.
+// loadAudio decodes a .wav/.ogg/.mp3 file into raw PCM bytes, cached by path.
 func (g *Game) loadAudio(path string) ([]byte, error) {
 	if pcm, ok := g.sfxPCM[path]; ok {
 		return pcm, nil
@@ -222,6 +223,12 @@ func (g *Game) loadAudio(path string) ([]byte, error) {
 	switch {
 	case strings.HasSuffix(path, ".wav"):
 		s, derr := wav.DecodeWithSampleRate(g.audioCtx.SampleRate(), f)
+		if derr != nil {
+			return nil, derr
+		}
+		pcm, err = io.ReadAll(s)
+	case strings.HasSuffix(path, ".ogg"):
+		s, derr := vorbis.DecodeWithSampleRate(g.audioCtx.SampleRate(), f)
 		if derr != nil {
 			return nil, derr
 		}
@@ -274,6 +281,7 @@ func (g *Game) startMusicNow(path string) {
 			fmt.Println("play_music:", err)
 			return
 		}
+
 		loop := audio.NewInfiniteLoop(bytes.NewReader(pcm), int64(len(pcm)))
 		p, perr := g.audioCtx.NewPlayer(loop)
 		if perr != nil {

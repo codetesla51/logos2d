@@ -1,13 +1,11 @@
 // BREAKOUT — brick breaker on the logos2d declarative ECS.
-// Paddle steers left/right; ball bounces off walls (ent_on_tick bounds
-// check) and off paddle/bricks via collide() rules. Ball heading is stored
-// as an angle + scalar speed (Data keys "ang"/"spd"); velocity is derived
-// each tick, so reflections are just angle math — no sqrt needed.
+// Ball physics: velocity lives directly in vx/vy (the engine integrates it).
+// Walls bounce in ent_on_tick bounds checks; paddle/bricks via collide()
+// rules. fix_vy() guarantees the ball never goes near-horizontal, so it
+// always makes progress and can never "hang" rattling side to side.
 
 let W = 320              // logical screen (window_width() == 320)
 let H = 240
-let PI = 3.14159
-let MAX_ANG = 1.05       // max deflection off paddle center (~60 degrees)
 let BALL_BASE = 2.6      // serve speed
 let BALL_MAX = 4.2
 
@@ -29,36 +27,55 @@ fn spawn_paddle() {
 fn spawn_ball() {
     let bid = create("ball", "ballGrey.png", ent_get(pid, "x"), H - 34, table{
         scale: 0.5, w: 9, h: 9,
-        ang: random(0, 1) * 0.6 - 0.3,   // slight random lean, radians
+        vx: 0, vy: 0,
         spd: BALL_BASE
     })
+    // serve straight up with a slight random lean, exact speed
+    let vx = random(-12, 12) / 10.0
+    ent_set(bid, "vx", vx)
+    ent_set(bid, "vy", 0.0 - math_sqrt(BALL_BASE * BALL_BASE - vx * vx))
     ent_on_tick(bid, fn(id) { ball_tick(id) })
 }
 
 fn ball_tick(id) {
-    let a = ent_get(id, "ang")
-    let s = ent_get(id, "spd")
-    // derive velocity from heading (vx=sin, vy=-cos so ang 0 = straight up)
-    ent_set(id, "vx", math_sin(a) * s)
-    ent_set(id, "vy", (0.0 - math_cos(a)) * s)
     let x = ent_get(id, "x")
     if x < 8 {
         ent_set(id, "x", 8)
-        ent_set(id, "ang", 0.0 - a)          // side wall: flip vx
+        ent_set(id, "vx", 0.0 - ent_get(id, "vx"))
     } else {
         if x > W - 8 {
             ent_set(id, "x", W - 8)
-            ent_set(id, "ang", 0.0 - a)
+            ent_set(id, "vx", 0.0 - ent_get(id, "vx"))
         }
     }
     let y = ent_get(id, "y")
     if y < 8 {
         ent_set(id, "y", 8)
-        ent_set(id, "ang", PI - a)           // top wall: flip vy
+        ent_set(id, "vy", 0.0 - ent_get(id, "vy"))
     } else {
         if y > H + 14 {
             lose_ball(id)
         }
+    }
+}
+
+// fix_vy enforces |vy| >= 30% of speed so trajectories always make
+// vertical progress (kills near-horizontal rattling).
+fn fix_vy(id) {
+    let s = ent_get(id, "spd")
+    let vy = ent_get(id, "vy")
+    let minv = s * 0.3
+    if abs(vy) < minv {
+        let sy = 1
+        if vy < 0 {
+            sy = 0 - 1
+        }
+        let sx = 1
+        if ent_get(id, "vx") < 0 {
+            sx = 0 - 1
+        }
+        ent_set(id, "vy", sy * minv)
+        ent_set(id, "vx", sx * math_sqrt(s * s - minv * minv))
     }
 }
 
@@ -124,7 +141,8 @@ fn start_game() {
 
 fn register_rules() {
     collide("ball", "paddle", fn(bid, plid) {
-        // deflection by hit offset: center = straight up, edges = steep
+        // deflection by hit offset: center = straight up, edges = steep.
+        // Speed is preserved exactly via sqrt(s^2 - vx^2).
         let off = (ent_get(bid, "x") - ent_get(plid, "x")) / 27.0
         if off < -1 {
             off = -1
@@ -132,21 +150,41 @@ fn register_rules() {
         if off > 1 {
             off = 1
         }
-        ent_set(bid, "ang", off * MAX_ANG)
+        let s = ent_get(bid, "spd")
+        let vx = off * s * 0.85
+        ent_set(bid, "vx", vx)
+        ent_set(bid, "vy", 0.0 - math_sqrt(s * s - vx * vx))
         ent_set(bid, "y", ent_get(plid, "y") - 13)
-        invuln_after(bid, 8)
+        invuln_after(bid, 2)
     })
     collide("ball", "bricks", fn(bid, kid) {
         flash(kid, "#ffffff", 4)
         damage(kid, 1)
-        // approximate vertical bounce; speed creeps up as bricks die
-        ent_set(bid, "ang", PI - ent_get(bid, "ang"))
-        let s = ent_get(bid, "spd") * 1.03
+        // reflect on the axis of LEAST penetration (side hit flips vx,
+        // top/bottom hit flips vy) so bounces read naturally
+        let dx = ent_get(bid, "x") - ent_get(kid, "x")
+        let dy = ent_get(bid, "y") - ent_get(kid, "y")
+        let ox = 15.5 - abs(dx)
+        let oy = 15.5 - abs(dy)
+        if ox < oy {
+            ent_set(bid, "vx", 0.0 - ent_get(bid, "vx"))
+        } else {
+            ent_set(bid, "vy", 0.0 - ent_get(bid, "vy"))
+        }
+        fix_vy(bid)
+        // speed creeps up as bricks die, direction ratio preserved
+        let old = ent_get(bid, "spd")
+        let s = old * 1.03
         if s > BALL_MAX {
             s = BALL_MAX
         }
-        ent_set(bid, "spd", s)
-        invuln_after(bid, 6)
+        if s > old {
+            let k = s / old
+            ent_set(bid, "vx", ent_get(bid, "vx") * k)
+            ent_set(bid, "vy", ent_get(bid, "vy") * k)
+            ent_set(bid, "spd", s)
+        }
+        invuln_after(bid, 2)
     })
 }
 

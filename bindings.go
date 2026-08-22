@@ -653,6 +653,15 @@ func registerBindings(vm *interpreter.Interpreter, g *Game) {
 		return &logos.Float{Value: math.Sin(toF(args[0]))}
 	})
 
+	vm.Register("math_sqrt", func(args ...logos.Object) logos.Object {
+		// sqrt of a negative clamps to 0 instead of erroring
+		v := toF(args[0])
+		if v < 0 {
+			v = 0
+		}
+		return &logos.Float{Value: math.Sqrt(v)}
+	})
+
 	vm.Register("math_cos", func(args ...logos.Object) logos.Object {
 		return &logos.Float{Value: math.Cos(toF(args[0]))}
 	})

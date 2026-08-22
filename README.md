@@ -8,7 +8,7 @@ declarative entity system as builtins.
 - All game logic lives in a `main.lgs` script.
 - Scripters never touch Go. The engine is a fixed set of **builtins** (global
   functions) plus a handful of **lifecycle hooks** the script implements.
-- The shipped game is **VOID RUNNER** (`demo/main.lgs`) — a vertical arcade
+- The shipped game is **VOID RUNNER** (`demo/void_runner/main.lgs`) — a vertical arcade
   shooter.
 
 ---
@@ -19,13 +19,13 @@ declarative entity system as builtins.
 # build (default target uses Wayland; avoids a known GLFW stuck-key bug under XWayland)
 make
 # or
-go run . demo/main.lgs
+go run . demo/void_runner/main.lgs
 
 # windowed run convenience
 make run
 
 # headless autopilot (bot plays itself; useful for testing)
-go run . demo/main.lgs -auto
+go run . demo/void_runner/main.lgs -auto
 ```
 
 Requirements: Go ≥ 1.22, Ebiten v2, system OpenGL. Audio is `.wav`/`.ogg`/`.mp3`.
@@ -480,7 +480,7 @@ Build targets (from `Makefile`): `make` (Wayland, default), `make x11`,
 
 ## Verifying changes
 
-After editing `demo/main.lgs`, run the headless harness (no window needed):
+After editing `demo/void_runner/main.lgs`, run the headless harness (no window needed):
 
 ```sh
 go test -run TestHeadlessDemo2
@@ -492,6 +492,6 @@ runtime error fails the test — this is how syntax/logic regressions surface
 without a human at the keyboard.
 
 For real feel (difficulty curve, boss timing, input), a human must play it:
-launch `go run . demo/main.lgs` and exercise menu → play → pause → over → win.
+launch `go run . demo/void_runner/main.lgs` and exercise menu → play → pause → over → win.
 
 

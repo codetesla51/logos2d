@@ -205,10 +205,17 @@ fn make_brick(cell, kind) {
         hp: hp
     })
     if kind != "" {
-        // mark it special + pin a spinning star on it so players can see
+        // mark it special and pin the ACTUAL powerup icon on it, so the
+        // player can see exactly what they'll get. A pulsing outline is
+        // drawn around it each frame in draw_special_markers().
         ent_set(bid, "pu", kind)
-        let iid = create("fx", "particleStar.png", ent_get(bid, "x"), ent_get(bid, "y"), table{
-            scale: 0.32, spin: 5, ttl: -1
+        let icon = "particleStar.png"
+        if kind == "laser" { icon = "pu_rapid.png" }
+        if kind == "multi" { icon = "pu_twin.png" }
+        if kind == "power" { icon = "pu_rocket.png" }
+        if kind == "color" { icon = "pu_color.png" }
+        let iid = create("fx", icon, ent_get(bid, "x"), ent_get(bid, "y"), table{
+            scale: 0.42, spin: 6, ttl: -1
         })
         ent_set(bid, "icon", iid)
     }
@@ -284,7 +291,7 @@ fn drop_pickup(x, y, kind) {
         img = "pu_color.png"
     }
     create("pickups", img, x, y, table{
-        vy: 1.1, spin: 5, scale: 0.3, w: 10, h: 10, kind: kind
+        vy: 1.1, spin: 5, scale: 0.1, w: 10, h: 10, kind: kind
     })
 }
 
@@ -764,8 +771,23 @@ fn any_attached() {
     return out
 }
 
+fn draw_special_markers() {
+    for bid in group_ids("bricks") {
+        if ent_get(bid, "pu") {
+            let x = ent_get(bid, "x")
+            let y = ent_get(bid, "y")
+            let p = 12 + (gt % 30) / 10
+            draw_line(x - p, y - p, x + p, y - p, "#ffe082", 2)
+            draw_line(x + p, y - p, x + p, y + p, "#ffe082", 2)
+            draw_line(x + p, y + p, x - p, y + p, "#ffe082", 2)
+            draw_line(x - p, y + p, x - p, y - p, "#ffe082", 2)
+        }
+    }
+}
+
 fn on_draw_front() {
     if state == "play" || state == "over" || state == "win" {
+        draw_special_markers()
         let lv = "LEVEL ${level}"
         draw_text(lv, (W - text_width(lv)) / 2, 8, "#7fdbff")
         draw_text("SCORE ${score}", 8, 8, "#e8ecf2")

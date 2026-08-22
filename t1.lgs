@@ -1,6 +1,0 @@
-fn on_load() {
-    print("A")
-    let f = "m" + "2" + ".wav"
-    print(f)
-    print("B")
-}

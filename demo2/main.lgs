@@ -131,6 +131,9 @@ fn start_game() {
     // the player is just another entity — spawned last so it draws on top
     pid = create("player", "player.png", 160, 212, table{scale: 0.22, w: 10, h: 14})
     over_t = 0
+    stop_music()
+    play_music("music.wav")
+    music_on = true
     set_world_paused(false)
     state = "play"
 }
@@ -152,6 +155,8 @@ fn on_load() {
     preload_sprite("pu_twin.png")
     preload_sprite("pu_shield.png")
     preload_sprite("pu_heart.png")
+    play_music("music.wav")
+    music_on = true
     init_stars()
     register_rules()
     print("game loaded (declarative)")
@@ -306,7 +311,8 @@ fn on_update(dt) {
             stop_music()
             music_on = false
         } else {
-                    music_on = true
+            play_music("music.wav")
+            music_on = true
         }
     }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/codetesla51/logos/logos"
@@ -61,6 +62,8 @@ type Game struct {
 	musicPlayer          *audio.Player
 	musicPending         bool
 	pendingMusicPath     string
+	musicGen             uint64 // invalidates in-flight decodes
+	audioMu              sync.Mutex
 	scriptMod            time.Time // main.lgs mtime for hot reload
 }
 
@@ -258,30 +261,45 @@ func (g *Game) playMusic(path string) {
 	g.pendingMusicPath = path
 }
 
-// startMusicNow performs the real (potentially slow) load + play. Only
-// ever called from Update, i.e. with the game loop already running.
+// startMusicNow kicks off the real load on a background goroutine so the
+// long decode never stalls a frame. The finished player is swapped in
+// under lock unless a newer request (or stop_music) superseded it. Only
+// called from Update, i.e. with the game loop already running.
 func (g *Game) startMusicNow(path string) {
-	pcm, err := g.loadAudio(path)
-	if err != nil {
-		fmt.Println("play_music:", err)
-		return
-	}
-	loop := audio.NewInfiniteLoop(bytes.NewReader(pcm), int64(len(pcm)))
-	p, err := g.audioCtx.NewPlayer(loop)
-	if err != nil {
-		fmt.Println("play_music:", err)
-		return
-	}
-	if g.musicPlayer != nil {
-		g.musicPlayer.Close()
-	}
-	p.Play()
-	g.musicPlayer = p
+	g.musicGen++
+	gen := g.musicGen
+	go func() {
+		pcm, err := g.loadAudio(path)
+		if err != nil {
+			fmt.Println("play_music:", err)
+			return
+		}
+		loop := audio.NewInfiniteLoop(bytes.NewReader(pcm), int64(len(pcm)))
+		p, perr := g.audioCtx.NewPlayer(loop)
+		if perr != nil {
+			fmt.Println("play_music:", perr)
+			return
+		}
+		g.audioMu.Lock()
+		defer g.audioMu.Unlock()
+		if gen != g.musicGen {
+			p.Close()
+			return
+		}
+		if g.musicPlayer != nil {
+			g.musicPlayer.Close()
+		}
+		p.Play()
+		g.musicPlayer = p
+	}()
 }
 
 func (g *Game) stopMusic() {
 	g.musicPending = false
 	g.pendingMusicPath = ""
+	g.audioMu.Lock()
+	defer g.audioMu.Unlock()
+	g.musicGen++ // any decode still running becomes garbage on completion
 	if g.musicPlayer != nil {
 		g.musicPlayer.Close()
 		g.musicPlayer = nil

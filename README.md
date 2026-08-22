@@ -8,7 +8,7 @@ declarative entity system as builtins.
 - All game logic lives in a `main.lgs` script.
 - Scripters never touch Go. The engine is a fixed set of **builtins** (global
   functions) plus a handful of **lifecycle hooks** the script implements.
-- The shipped game is **VOID RUNNER** (`demo2/main.lgs`) — a vertical arcade
+- The shipped game is **VOID RUNNER** (`demo/main.lgs`) — a vertical arcade
   shooter.
 
 ---
@@ -19,13 +19,13 @@ declarative entity system as builtins.
 # build (default target uses Wayland; avoids a known GLFW stuck-key bug under XWayland)
 make
 # or
-go run . demo2/main.lgs
+go run . demo/main.lgs
 
 # windowed run convenience
 make run
 
 # headless autopilot (bot plays itself; useful for testing)
-go run . demo2/main.lgs -auto
+go run . demo/main.lgs -auto
 ```
 
 Requirements: Go ≥ 1.22, Ebiten v2, system OpenGL. Audio is `.wav`/`.ogg`/`.mp3`.
@@ -36,7 +36,7 @@ Verification (no window needed):
 go test -run TestHeadlessDemo2
 ```
 
-It chdirs into `demo2`, loads the script, runs `on_load`, starts the game, ticks
+It chdirs into `demo`, loads the script, runs `on_load`, starts the game, ticks
 3000 frames, and pokes every draw hook — failing on any parse/runtime error.
 
 ---
@@ -445,7 +445,7 @@ bindings.go    ALL vm.Register builtins (this is the API surface)
 ecs.go         World: entities, timers, collide rules, simulate(), drawEntities()
 memory.md      agent working notes (bug stories, status, conventions)
 README.md      this file
-demo2/
+demo/
   main.lgs     the VOID RUNNER game script (all gameplay lives here)
   *.png,*.wav,*.ogg   game assets (gitignored — copy them in; don't commit)
 headless_check_test.go  go test -run TestHeadlessDemo2  (verification harness)
@@ -458,7 +458,7 @@ Build targets (from `Makefile`): `make` (Wayland, default), `make x11`,
 
 ## Verifying changes
 
-After editing `demo2/main.lgs`, run the headless harness (no window needed):
+After editing `demo/main.lgs`, run the headless harness (no window needed):
 
 ```sh
 go test -run TestHeadlessDemo2
@@ -470,6 +470,6 @@ runtime error fails the test — this is how syntax/logic regressions surface
 without a human at the keyboard.
 
 For real feel (difficulty curve, boss timing, input), a human must play it:
-launch `go run . demo2/main.lgs` and exercise menu → play → pause → over → win.
+launch `go run . demo/main.lgs` and exercise menu → play → pause → over → win.
 
 

@@ -7,7 +7,7 @@ import (
 
 func TestHeadlessDemo2(t *testing.T) {
 	wd, _ := os.Getwd()
-	if err := os.Chdir("demo2"); err != nil {
+	if err := os.Chdir("demo"); err != nil {
 		t.Fatal(err)
 	}
 	defer os.Chdir(wd)

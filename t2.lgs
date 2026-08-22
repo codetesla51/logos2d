@@ -1,0 +1,5 @@
+fn on_load() {
+    print("A")
+    print("m" + cli_flag("d") + ".wav")
+    print("B")
+}

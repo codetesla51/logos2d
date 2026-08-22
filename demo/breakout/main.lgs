@@ -1,0 +1,222 @@
+// BREAKOUT — brick breaker on the logos2d declarative ECS.
+// Paddle steers left/right; ball bounces off walls (ent_on_tick bounds
+// check) and off paddle/bricks via collide() rules. Ball heading is stored
+// as an angle + scalar speed (Data keys "ang"/"spd"); velocity is derived
+// each tick, so reflections are just angle math — no sqrt needed.
+
+let W = 320              // logical screen (window_width() == 320)
+let H = 240
+let PI = 3.14159
+let MAX_ANG = 1.05       // max deflection off paddle center (~60 degrees)
+let BALL_BASE = 2.6      // serve speed
+let BALL_MAX = 4.2
+
+let state = "menu"       // menu | play | over | win
+let score = 0
+let lives = 3
+let pid = 0              // paddle entity id
+
+fn load_font_asset() {
+    load_font("kenvector_future.ttf", 12)
+}
+
+fn spawn_paddle() {
+    pid = create("paddle", "paddleBlu.png", W / 2, H - 16, table{
+        scale: 0.5, w: 50, h: 10
+    })
+}
+
+fn spawn_ball() {
+    let bid = create("ball", "ballGrey.png", ent_get(pid, "x"), H - 34, table{
+        scale: 0.5, w: 9, h: 9,
+        ang: random(0, 1) * 0.6 - 0.3,   // slight random lean, radians
+        spd: BALL_BASE
+    })
+    ent_on_tick(bid, fn(id) { ball_tick(id) })
+}
+
+fn ball_tick(id) {
+    let a = ent_get(id, "ang")
+    let s = ent_get(id, "spd")
+    // derive velocity from heading (vx=sin, vy=-cos so ang 0 = straight up)
+    ent_set(id, "vx", math_sin(a) * s)
+    ent_set(id, "vy", (0.0 - math_cos(a)) * s)
+    let x = ent_get(id, "x")
+    if x < 8 {
+        ent_set(id, "x", 8)
+        ent_set(id, "ang", 0.0 - a)          // side wall: flip vx
+    } else {
+        if x > W - 8 {
+            ent_set(id, "x", W - 8)
+            ent_set(id, "ang", 0.0 - a)
+        }
+    }
+    let y = ent_get(id, "y")
+    if y < 8 {
+        ent_set(id, "y", 8)
+        ent_set(id, "ang", PI - a)           // top wall: flip vy
+    } else {
+        if y > H + 14 {
+            lose_ball(id)
+        }
+    }
+}
+
+fn lose_ball(id) {
+    kill(id)
+    lives = lives - 1
+    if lives <= 0 {
+        state = "over"
+        set_world_paused(true)
+    } else {
+        after(40, fn() { spawn_ball() })
+    }
+}
+
+fn build_bricks() {
+    let imgs = ["element_red_square_glossy.png",
+                "element_yellow_square_glossy.png",
+                "element_green_square_glossy.png",
+                "element_blue_square_glossy.png",
+                "element_purple_square.png"]
+    for row in range(0, 5) {
+        let img = imgs[row]
+        for col in range(0, 10) {
+            let hp = 1
+            if row < 2 {
+                hp = 2
+            }
+            let bid = create("bricks", img, 22 + col * 31, 38 + row * 24, table{
+                scale: 0.75, w: 22, h: 22,
+                hp: hp                 // top two rows take 2 hits
+            })
+            on_death(bid, fn(id) {
+                burst(ent_get(id, "x"), ent_get(id, "y"))
+                score += 25
+                if group_count("bricks") == 0 {
+                    state = "win"
+                    set_world_paused(true)
+                }
+            })
+        }
+    }
+}
+
+fn burst(x, y) {
+    for i in range(0, 4) {
+        create("fx", "particleStar.png", x, y, table{
+            vx: random(-20, 20) / 10.0, vy: random(-30, -10) / 10.0,
+            scale: 0.4, ttl: 22
+        })
+    }
+}
+
+fn start_game() {
+    reset_world()
+    score = 0
+    lives = 3
+    state = "play"
+    set_title("BREAKOUT")
+    spawn_paddle()
+    build_bricks()
+    spawn_ball()
+}
+
+fn register_rules() {
+    collide("ball", "paddle", fn(bid, plid) {
+        // deflection by hit offset: center = straight up, edges = steep
+        let off = (ent_get(bid, "x") - ent_get(plid, "x")) / 27.0
+        if off < -1 {
+            off = -1
+        }
+        if off > 1 {
+            off = 1
+        }
+        ent_set(bid, "ang", off * MAX_ANG)
+        ent_set(bid, "y", ent_get(plid, "y") - 13)
+        invuln_after(bid, 8)
+    })
+    collide("ball", "bricks", fn(bid, kid) {
+        flash(kid, "#ffffff", 4)
+        damage(kid, 1)
+        // approximate vertical bounce; speed creeps up as bricks die
+        ent_set(bid, "ang", PI - ent_get(bid, "ang"))
+        let s = ent_get(bid, "spd") * 1.03
+        if s > BALL_MAX {
+            s = BALL_MAX
+        }
+        ent_set(bid, "spd", s)
+        invuln_after(bid, 6)
+    })
+}
+
+fn steer_paddle() {
+    let x = ent_get(pid, "x")
+    if key_down("left") {
+        x = x - 3.2
+    }
+    if key_down("right") {
+        x = x + 3.2
+    }
+    if x < 28 {
+        x = 28
+    }
+    if x > W - 28 {
+        x = W - 28
+    }
+    ent_set(pid, "x", x)
+}
+
+fn draw_centered(str, y, c) {
+    draw_text(str, (W - text_width(str)) / 2, y, c)
+}
+
+fn on_load() {
+    load_font_asset()
+    preload_sprite("paddleBlu.png")
+    preload_sprite("ballGrey.png")
+    preload_sprite("particleStar.png")
+    preload_sprite("element_red_square_glossy.png")
+    preload_sprite("element_yellow_square_glossy.png")
+    preload_sprite("element_green_square_glossy.png")
+    preload_sprite("element_blue_square_glossy.png")
+    preload_sprite("element_purple_square.png")
+    set_title("BREAKOUT — press ENTER")
+    register_rules()
+}
+
+fn on_update(dt) {
+    if state == "play" {
+        steer_paddle()
+    } else {
+        if key_pressed("enter") {
+            set_world_paused(false)
+            start_game()
+        }
+    }
+}
+
+fn on_draw_back() {
+    draw_rect(0, 0, W, H, "#10141c")
+}
+
+fn on_draw_front() {
+    if state == "play" || state == "over" || state == "win" {
+        let sc = "SCORE ${score}"
+        let lv = "LIVES ${lives}"
+        draw_text(sc, 8, 8, "#e8ecf2")
+        draw_text(lv, W - text_width(lv) - 8, 8, "#e8ecf2")
+    }
+    if state == "menu" {
+        draw_centered("BREAKOUT", 100, "#f1c40f")
+        draw_centered("ENTER TO START", 124, "#e8ecf2")
+    }
+    if state == "over" {
+        draw_centered("GAME OVER", 108, "#e74c3c")
+        draw_centered("ENTER TO RETRY", 130, "#e8ecf2")
+    }
+    if state == "win" {
+        draw_centered("YOU WIN!", 108, "#2ecc71")
+        draw_centered("ENTER TO PLAY AGAIN", 130, "#e8ecf2")
+    }
+}

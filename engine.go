@@ -72,6 +72,16 @@ type Game struct {
 	scriptMod            time.Time // main.lgs mtime for hot reload
 }
 
+// audioContext returns the process-wide Ebiten audio context, creating it
+// on first use. NewContext panics if one already exists, so multiple Games
+// (e.g. tests loading several games) must share it.
+func audioContext() *audio.Context {
+	if ctx := audio.CurrentContext(); ctx != nil {
+		return ctx
+	}
+	return audio.NewContext(44100)
+}
+
 func newGame(vm *interpreter.Interpreter) *Game {
 	g := &Game{
 		vm:          vm,
@@ -83,15 +93,12 @@ func newGame(vm *interpreter.Interpreter) *Game {
 		keysPrev:    map[ebiten.Key]bool{},
 		mouseCurr:   map[ebiten.MouseButton]bool{},
 		mousePrev:   map[ebiten.MouseButton]bool{},
-		audioCtx:    audio.NewContext(44100),
+		audioCtx:    audioContext(),
 		sfxPCM:      map[string][]byte{},
 		failedAudio: map[string]bool{},
 	}
 	if st, err := os.Stat("main.lgs"); err == nil {
 		g.scriptMod = st.ModTime()
-	}
-	if g.face == nil {
-		fmt.Println("warning: no system font found, draw_text will be skipped")
 	}
 	return g
 }

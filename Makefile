@@ -17,10 +17,13 @@ run: build
 demo: build
 	./logos2d demo/void_runner/main.lgs -auto
 
+breakout: build
+	./logos2d demo/breakout/main.lgs
+
 install: build
 	install -m755 logos2d $(PREFIX)/bin/logos2d
 
 clean:
 	rm -f logos2d
 
-.PHONY: build x11 run demo install clean
+.PHONY: build x11 run demo breakout install clean

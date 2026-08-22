@@ -3,11 +3,22 @@ package main
 import (
 	"os"
 	"testing"
+
+	"github.com/hajimehoshi/ebiten/v2"
 )
 
 func TestHeadlessDemo2(t *testing.T) {
+	headless(t, "demo/void_runner")
+}
+
+func TestHeadlessBreakout(t *testing.T) {
+	headless(t, "demo/breakout")
+}
+
+func headless(t *testing.T, dir string) {
+	t.Helper()
 	wd, _ := os.Getwd()
-	if err := os.Chdir("demo/void_runner"); err != nil {
+	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
 	defer os.Chdir(wd)
@@ -32,12 +43,29 @@ func TestHeadlessDemo2(t *testing.T) {
 			t.Fatalf("update %d error: %v", i, err)
 		}
 	}
+	// simulate an ENTER press: menu/game-over screens should restart into
+	// gameplay through the real input path
+	g.keysCurr[ebiten.KeyEnter] = true
+	if err := g.Update(); err != nil {
+		t.Fatalf("enter update error: %v", err)
+	}
+	delete(g.keysCurr, ebiten.KeyEnter)
+	g.keysPrev[ebiten.KeyEnter] = true
+	for i := 0; i < 600; i++ {
+		if err := g.Update(); err != nil {
+			t.Fatalf("post-enter update %d error: %v", i, err)
+		}
+	}
 	// poke every hook we rely on so syntax/logic errors surface
-	for _, fn := range []string{"on_draw_back", "on_draw_front", "draw_hud"} {
+	for _, fn := range hooks() {
 		if _, err := vm.Call(fn); err != nil {
 			t.Logf("%s: %v", fn, err)
 		}
 	}
+}
+
+func hooks() []string {
+	return []string{"on_draw_back", "on_draw_front", "draw_hud"}
 }
 
 func readMain() string {

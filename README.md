@@ -1,53 +1,85 @@
 # logos2d
 
-A tiny 2D game engine where **the game is written in Logos** and Go/Ebiten is
-only the runtime underneath. Logos is the scripting language (think LÖVE/Lua or
-Godot's GDScript); Go is a thin host that exposes drawing, input, audio, and a
-declarative entity system as builtins.
+> A tiny 2D game engine where **the game is written in Logos** and Go + Ebiten
+> are only the runtime underneath.
 
-- All game logic lives in a `main.lgs` script.
-- Scripters never touch Go. The engine is a fixed set of **builtins** (global
-  functions) plus a handful of **lifecycle hooks** the script implements.
-- The shipped game is **VOID RUNNER** (`demo/void_runner/main.lgs`) — a vertical arcade
-  shooter.
+![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)
+![Ebiten](https://img.shields.io/badge/Built%20with-Ebiten-00ADD8)
+![Platform](https://img.shields.io/badge/platform-Linux%20%2F%20macOS%20%2F%20Windows-4d4d4d)
+
+`logos2d` is a small, opinionated engine for building arcade-style 2D games.
+You write all gameplay — spawning, collisions, AI, HUD, state machines — in a
+`main.lgs` script. The Go/Ebiten layer is a thin, fixed host that exposes
+drawing, input, audio, and a **declarative entity system** as builtins.
+Scripters never touch Go.
+
+Two complete games ship in `demo/`: **VOID RUNNER** (a vertical shoot-'em-up)
+and **BREAKOUT** (brick-breaker with pickups, random layouts, and level
+progression).
+
+> [!NOTE]
+> This repo is the engine *and* its demos. The engine is the handful of Go
+> files (`engine.go`, `ecs.go`, `bindings.go`, `vm.go`, `main.go`); everything
+> you'd call "a game" lives under `demo/<name>/main.lgs`.
 
 ---
 
 ## Quick start
 
 ```sh
-# build (default target uses Wayland; avoids a known GLFW stuck-key bug under XWayland)
+# Build (default target uses Wayland — avoids a known GLFW stuck-key bug
+# under XWayland). The binary is ./logos2d.
 make
-# or
-go run . demo/void_runner/main.lgs
 
-# windowed run convenience
-make run
+# Run a demo (engine takes one arg: a path to a script; it chdirs into that
+# folder so asset paths resolve relatively)
+make run           # VOID RUNNER
+make breakout      # BREAKOUT
+go run . demo/void_runner/main.lgs -auto   # headless autopilot (bot plays)
 
-# headless autopilot (bot plays itself; useful for testing)
-go run . demo/void_runner/main.lgs -auto
+# Build with the X11 backend instead of Wayland
+make x11
 ```
 
-Requirements: Go ≥ 1.22, Ebiten v2, system OpenGL. Audio is `.wav`/`.ogg`/`.mp3`.
+**Requirements:** Go 1.22+, [Ebiten v2](https://ebiten.org/), and a system with
+OpenGL. Audio accepts `.wav` / `.ogg` / `.mp3` (OGG recommended).
 
-Verification (no window needed):
+**Verify without a window** (loads both demos, runs `on_load`, starts the game,
+ticks thousands of frames, pokes every draw hook):
 
 ```sh
-go test -run TestHeadlessDemo2
+go test ./...
 ```
-
-It chdirs into `demo`, loads the script, runs `on_load`, starts the game, ticks
-3000 frames, and pokes every draw hook — failing on any parse/runtime error.
 
 ---
 
-## VOID RUNNER (the demo game)
+## Features
 
-A shoot-'em-up. Fly your ship up the void, shoot rocks and enemy fighters, grab
-power-ups, survive escalating waves, then kill the **VOID RUNNER** boss for a win
-screen.
+- **Declarative ECS.** `create` / `collide` / `every` / `ent_on_tick` declare
+  behavior; a fixed-order pipeline runs it every tick.
+- **Immediate-mode drawing.** `draw_rect` / `draw_circle` / `draw_line` /
+  `draw_text` / `draw_sprite*` queue commands; the engine auto-draws every
+  entity (sprite + optional HP bar + hit-flash + shake).
+- **Sandboxed scripting.** The Logos VM has file I/O, network, shell, and
+  `exit` disabled — a script can only call registered builtins, never the OS.
+- **Fixed determinism.** 320×240 logical space, 60 TPS, windowed at 640×480.
+  Gameplay speed is independent of monitor refresh.
+- **Behavior trees.** `run_behavior(id, tree)` is a first-class declarative AI
+  builtin (conditions `hp_below` / `player_near`, actions `chase` / `flee`).
+- **Hot reload.** Edit `main.lgs` while the game runs and it reloads live;
+  parse errors keep the last good version running.
+- **Headless harness.** A `Game.InjectKey` hook lets tests drive menus and
+  launches with no window — see `headless_check_test.go`.
 
-### Controls
+---
+
+## Demos
+
+### VOID RUNNER — `demo/void_runner/`
+
+A vertical arcade shooter: fly up the void, shoot rocks and enemy fighters,
+grab power-up pills, survive escalating waves, then kill the **VOID RUNNER**
+boss for a win screen.
 
 | Input | Action |
 |-------|--------|
@@ -58,442 +90,312 @@ screen.
 | `M` | toggle music |
 | `ENTER` / `SPACE` / left-click | start / restart from menu, game-over, win |
 
-### Game states
+Entities: `player` (3 HP, blinks 60 ticks after a hit), `meteors` (4 variants,
+may drop power-ups), `ships` (3 personalities: gunner / weaver / hunter),
+`boss` (sweeps, aimed shots, enrages < 50% HP), plus bullets, rockets, and
+power-up pills (`rapid` / `twin` / `shield` / `heart` / `rocket`). Score feeds
+a combo multiplier (capped x9) that decays when idle.
 
-`menu → play → pause` and `play → over` / `play → win`. The world is **frozen**
-(via `set_world_paused`) on menu/pause/over/win; only `on_update` input handling
-and the draw hooks keep running.
+### BREAKOUT — `demo/breakout/`
 
-### Entities & groups
+A brick-breaker with a pre-launch serve, special bricks that drop pickups,
+randomized layouts every level, and level progression.
 
-- `player` — you. 3 HP, inertia movement, invulnerable 60 ticks after a hit (blinks).
-- `meteors` — 4 variants (brown/gray/red/white). 2 HP, knockback, 1/3 chance to drop a power-up.
-- `ships` — enemy fighters, 3 HP, 3 personalities (see below).
-- `ebullets` — enemy lasers (can be shot down by your bullets).
-- `bullets` / `rockets` — your projectiles.
-- `powerups` — dropped or trickled; max 2 live at once.
-- `boss` — the VOID RUNNER (appears after `BOSS_SCORE` and a survival gate).
+| Input | Action |
+|-------|--------|
+| `←` / `→` or `A` / `D` | move paddle |
+| `SPACE` | launch the served ball |
+| `ENTER` | start / restart, or advance to the next level after a win |
 
-### Enemy ship personalities (`spawn_ship`)
+Bricks are randomized per level; **star bricks** drop one of four pickups that
+fall for the paddle to catch:
 
-- **gunner** (red) — descends, fires straight down on a timer.
-- **weaver** (blue) — sine weave, occasional aimed shot.
-- **hunter** (green) — seeks toward your column, fires when close.
+| Pickup | Effect |
+|--------|--------|
+| `LASER` | balls auto-fire at the nearest brick |
+| `MULTI` | spawns two extra balls |
+| `POWER` | balls smash through and deal double damage |
+| `COLOR` | repaints the balls |
 
-All use smooth lerp movement (no frame "blinking"), cap at 3 live (4 once
-difficulty > 1.6), and never spawn instantly (`ship_armed` delay; waves tighten
-as difficulty climbs).
-
-### Weapons / power-ups
-
-Picked up as distinct **pill** sprites with floating text labels above them:
-
-| Pill | Kind | Effect |
-|------|------|--------|
-| green | `rapid` | faster fire (short cooldown) |
-| red | `twin` | twin-shot |
-| blue | `shield` | temporary shield bubble (absorbs one hit, then pops) |
-| red star | `heart` | +1 life (max 3) |
-| yellow | `rocket` | rockets — slow, heavy splash (does **2** dmg to ships, 99 splash to meteors) |
-
-Power-ups last `WEAPON_DURATION` (600 ticks); `heart`/`shield` are
-instantaneous/percent.
-
-### Boss & win
-
-The VOID RUNNER appears once you reach `BOSS_SCORE` (1200) **and** survive
-`frame_t >= 3600` (~60s), so the combo multiplier can't summon it instantly. It
-sweeps side-to-side, fires an aimed shot down your column, and at <50% HP goes
-**enraged** (3-way spread). Killing it scores +800 and shows the win screen
-("VOID RUNNER DESTROYED" / "the void goes quiet at last" / final score /
-blinking "PRESS ENTER TO RUN AGAIN").
-
-### Scoring & combo
-
-Each kill feeds a combo streak (`score_kill`): faster kills = bigger multiplier,
-capped at x9, decaying after 150 idle ticks. Meteors = 20, ships = 15, boss = 800,
-plus a small survival trickle (+5 every 60 ticks). A combo multiplier makes score
-climb fast — which is why the boss has a survival gate, not just a score gate.
-
-
+Clear all bricks to win → `ENTER` advances to the next level (keeps score and
+lives; ball speed scales up, capped). Running out of balls costs a life; zero
+lives ends the run.
 
 ---
 
-## The Logos language (essentials)
+## How it works
 
-Logos is a small scripting language. You only need a handful of constructs to
-write a game. Full language docs live in the `github.com/codetesla51/logos`
-repo; the parts this engine relies on:
+Four layers, with a hard boundary at `bindings.go`:
+
+```
+Ebiten       60 FPS loop, window, raw GPU draw, input, audio
+  │
+Logos VM     parse + eval .lgs, holds fns/lets, runs closures
+  │
+bindings.go  translate Logos values ↔ engine; mutate World; queue draws   ← API surface
+  │
+engine.go    Game struct, Update()/Draw(), input poll, hot reload, audio
+ecs.go       World, Entity, simulate(), collide rules, drawEntities()
+  │
+demo/*.lgs   on_load / on_update / on_draw_* / behavior trees = all game logic
+```
+
+A script declares **what** (entities, collision rules, timers, per-entity
+steering) and the engine's `simulate()` pipeline runs it in a fixed order each
+tick: advance `Tick` → fire timers → integrate motion (`x += vx`) → expire
+TTL → run per-entity steering closures → resolve collisions → death/HP cull →
+compact. Script-side decisions (bounce math, state machine, HUD) are still
+written as ordinary imperative code — `logos2d` is a declarative ECS with an
+imperative scripting surface, not "everything is declarative."
+
+### Lifecycle hooks
+
+The engine calls these script functions at fixed points. Missing hooks are
+silently skipped; `on_load` is expected at startup (and re-called on every hot
+reload).
+
+| Hook | When | Purpose |
+|------|------|---------|
+| `on_load()` | once at startup / each reload | preload sprites, `load_font`, `register_rules()`, init state |
+| `start_game()` | script-defined | `reset_world()`, spawn, set `state = "play"` |
+| `on_update(dt)` | every tick, **before** the world simulates | input, spawning, state machine, scoring |
+| `on_draw_back()` | in `Draw`, before entities | background, starfield, parallax |
+| `on_draw_front()` | in `Draw`, after entities | HUD, particles, overlays, win/over text |
+| `on_draw()` | legacy (only if no ECS builtins used) | script draws everything itself |
+
+`dt` is always `1/60`. The `Draw` pipeline picks `on_draw_back → entities →
+on_draw_front` when any ECS builtin has run, else the legacy `on_draw`.
+
+---
+
+## Scripting in Logos
+
+Logos is a small, curly-braced scripting language. You need only a handful of
+constructs to write a game:
 
 ```logos
-// variables (global by default; `let` is required)
-let hp = 3
-let name = "blue"
+let hp = 3                       // `let` is required; globals by default
+let p = table{x: 160, y: 212}    // tables are the object type; keys are strings
+p.x = p.x + 1                    // read with p.x or p["x"]
 
-// numbers are int/float; math is what you'd expect
-let d = 1.0 + frame_t / 6000.0
+fn add(a, b) { return a + b }    // closures capture their environment
 
-// tables = the object type. Keys are strings; read with `t.key` or `t["key"]`
-let p = table{x: 160, y: 212, w: 20}
-p.x = p.x + 1
+if hp <= 0 { state = "over" } else { state = "play" }
 
-// arrays
-let parts = []
-parts = push(parts, table{x: 1, y: 2})
-
-// functions (closures capture their environment — used heavily for AI/timers)
-fn add(a, b) {
-    return a + b
-}
-
-// if / else
-if hp <= 0 {
-    state = "over"
-} else {
-    state = "play"
-}
-
-// for-in over arrays / ranges
 for i in range(0, 10, 1) { ... }
 for s in stars { s.y = s.y + 1 }
 
-// anonymous function literals (passed to collide/every/ent_on_tick)
+// anonymous closures are passed to collide / every / ent_on_tick
 collide("bullets", "meteors", fn(b, m) {
     kill(b)
     damage(m, 1)
 })
 ```
 
-Gotcha (bitten us more than once): a `let` declared **inside an `if` block** in a
-top-level function does **not** bind to the following statement (the next line
-sees an undefined identifier). Declare `let` at the function's top level, or
-inline the value. `let` inside `for` loops and inside closures is fine.
+> [!WARNING]
+> A `let` declared **inside an `if` block** in a top-level function does not
+> bind to the following statement. Declare `let` at the function top level, or
+> inline the value. (`let` inside `for` loops and closures is fine.)
 
----
-
-## Lifecycle & hooks
-
-The engine calls these script functions at fixed points. All are optional except
-the ones the game actually uses; missing hooks are silently skipped (except
-`on_load`, which is expected at startup).
-
-| Hook | When | Purpose |
-|------|------|---------|
-| `on_load()` | once at startup, and on every hot reload | preload sprites, `register_rules()`, init state |
-| `start_game()` | script-defined; called to (re)begin a run | `reset_world()`, spawn the player, set `state = "play"` |
-| `on_update(dt)` | every tick, **before** the world simulates | input, spawning, state machine, scoring. Return value ignored. |
-| `on_draw_back()` | in `Draw`, before entities | starfield, parallax decor, background |
-| `on_draw_front()` | in `Draw`, after entities | HUD, juice (booms/particles), overlays, win/over text |
-| `draw_hud()` | convention — called from `on_draw_front` | score, lives, combo, weapon |
-
-The engine `Draw` pipeline is:
-
-```
-if world.active (any ECS builtin used):
-    call on_draw_back()
-    drawEntities()            // engine auto-draws every live entity + HP bars
-    call on_draw_front()
-else:
-    call on_draw()            // legacy: script draws everything itself
-```
-
-`dt` passed to `on_update` is `1/60` (the engine is fixed at 60 TPS). Most games
-ignore it and count frames with their own `frame_t`.
-
-### Hot reload
-
-Editing `main.lgs` while the game runs **auto-reloads**: the script is re-`Run`,
-`on_load` is re-called, and the world is reset. A parse error keeps the old code
-running (logged). This is great for iteration but means a half-finished save can
-inject broken code into a live session — edit a scratch copy or close the game
-first when someone is playing.
-
----
-
-## Engine facts
-
-- **Logical resolution is 320×240** (`gameW`/`gameH`). The script sees these
-  coordinates; `Layout()` returns them. `window_width()`/`window_height()` return
-  320/240.
-- **Fixed 60 TPS** (`ebiten.SetTPS(60)`) — gameplay speed is deterministic, not
-  tied to monitor refresh.
-- **World-space drawing**: every `draw_*` command is rendered relative to the
-  camera snapshot taken when it was queued. Draw the world, then
-  `set_camera(0, 0)` before HUD text so it stays put.
-- **Draw order = queue order** (painter's algorithm / z-order). Commands queued
-  earlier draw underneath later ones.
-- **Sprites load lazily** (or via `preload_sprite`). A missing/blank sprite
-  prints a one-time warning and is skipped — it will not crash the game.
-- **Audio**: `play_sound` (one-shot SFX) and `play_music` (looping). Music is
-  decoded on a background goroutine after the first tick, so calling it from
-  `on_load` is safe. Formats: `.wav` / `.ogg` / `.mp3` (OGG recommended — small
-  on disk, native decode).
-- **Font**: none by default. Scripts opt in with `load_font(path, size)`
-  (TTF, cached per path+size; becomes the active face for `draw_text` and
-  `text_width`). Until one loads, `draw_text` is skipped and `text_width`
-  returns 0. Use `text_width()` to center text.
-- **Sandbox**: the VM has file I/O, network, shell, and `exit` disabled. Scripts
-  cannot touch the filesystem or spawn processes — only the registered builtins.
-- **Entities are auto-drawn** by `drawEntities()`. To hide one without killing
-  it, set its `Data["hidden"] = true`.
+> [!NOTE]
+> `else` is a reserved word. When building behavior-tree tables, keep the keys
+> **quoted**: `table{cond:"hp_below", val:2, "then":…, "else":…}`.
 
 ---
 
 ## Builtins reference
 
-Everything below is a global function callable from `main.lgs`. Signatures use
-the Logos types `int`, `float`, `str`, `bool`, `table`, `array`, `id` (opaque
-entity id, an `int`), and `fn` (a function/closure value). Coordinates are in the
-320×240 logical space unless noted.
+All are global functions callable from `main.lgs`. Coordinates are in the
+320×240 logical space. Types: `int`, `float`, `str`, `bool`, `table`,
+`array`, `id` (opaque int entity id), `fn`.
 
 ### Drawing
 
 | Builtin | Signature | Notes |
 |---------|-----------|-------|
-| `draw_rect` | `(x, y, w, h, color)` | Filled rectangle; `(x,y)` is **top-left**. `color` is `"#rrggbb"`. |
-| `draw_circle` | `(x, y, r, color)` | Filled circle; `(x,y)` is the **center**, `r` is radius (float). |
-| `draw_line` | `(x1, y1, x2, y2, color, thickness)` | Line from `(x1,y1)` to `(x2,y2)`; `thickness` float. |
-| `draw_text` | `(str, x, y, color)` | Left-aligned text at `(x,y)` (top-left baseline). Use `text_width()` to center. |
-
-Colors are hex strings like `"#f1c40f"`. An empty/`""` color defaults to white.
-
-### Sprites
-
-| Builtin | Signature | Notes |
-|---------|-----------|-------|
-| `draw_sprite` | `(path, x, y)` | Draw at `(x,y)` **top-left**, native size. |
-| `draw_sprite_ex` | `(path, x, y, scale, rotation_degrees)` | `(x,y)` is the **center**; rotates around center (degrees, clockwise); `scale` float (0.5 = half). |
-| `draw_sprite_frame` | `(path, x, y, fw, fh, index)` | Draw frame `index` from a **horizontal strip** sheet (frames laid left→right). `(x,y)` top-left, `fw`/`fh` frame size, `index` wraps. |
-
-Sprites carry no tint by default. `draw_sprite_ex` accepts a tint via a separate
-engine path only when a tint is set; in practice use `flash()` on entities for
-hit-flash.
+| `draw_rect` | `(x, y, w, h, color)` | Filled rect; `(x,y)` top-left; `color` `"#rrggbb"`. |
+| `draw_circle` | `(x, y, r, color)` | Filled circle; `(x,y)` center, `r` radius. |
+| `draw_line` | `(x1, y1, x2, y2, color, thickness)` | Line; `thickness` float. |
+| `draw_text` | `(str, x, y, color)` | Left-aligned; use `text_width()` to center. Skipped until a font loads. |
+| `draw_sprite` | `(path, x, y)` | Top-left, native size. |
+| `draw_sprite_ex` | `(path, x, y, scale, rot_deg)` | Center; rotates (deg, CW). |
+| `draw_sprite_frame` | `(path, x, y, fw, fh, index)` | Frame `index` from a horizontal strip; wraps. |
+| `load_font` | `(path, size) -> bool` | Load TTF (cached per path+size); becomes active face. |
+| `text_width` | `(str) -> int` | Pixel width in current font (0 if none). |
+| `preload_sprite` | `(path) -> bool` | Decode a sprite now; call in `on_load`. |
 
 ### Camera & window
 
 | Builtin | Signature | Notes |
 |---------|-----------|-------|
-| `set_camera` | `(x, y)` | Set world camera offset. All subsequent `draw_*` are offset by it until changed. |
+| `set_camera` | `(x, y)` | World camera offset for all subsequent `draw_*`. |
 | `camera_x` / `camera_y` | `() -> int` | Current camera offset. |
 | `window_width` / `window_height` | `() -> int` | Always 320 / 240. |
-| `set_title` | `(str)` | Set the OS window title. |
-| `quit` | `()` | Request a clean engine termination (`ebiten.Termination`). |
+| `set_title` | `(str)` | OS window title. |
+| `quit` | `()` | Request clean engine termination. |
 
 ### Input
 
-Keyboard names: `right`, `left`, `up`, `down`, `space`, `enter`, `escape`, `tab`,
-`shift`, `ctrl`, `w`, `a`, `s`, `d`, `m`, `p`. Mouse buttons: `left`, `right`,
-`middle`.
+Keyboard names: `right left up down space enter escape tab shift ctrl w a s d m p`.
+Mouse buttons: `left right middle`.
 
 | Builtin | Signature | Notes |
 |---------|-----------|-------|
-| `key_down` | `(name) -> bool` | True while held. |
-| `key_pressed` | `(name) -> bool` | True only on the frame the key went down (edge). |
-| `key_released` | `(name) -> bool` | True only on the frame the key went up (edge). |
-| `mouse_pos` | `() -> table{x, y}` | Cursor in logical 320×240 pixels. |
+| `key_down` | `(name) -> bool` | Held. |
+| `key_pressed` | `(name) -> bool` | Edge (down this tick). |
+| `key_released` | `(name) -> bool` | Edge (up this tick). |
+| `mouse_pos` | `() -> table{x, y}` | Cursor in logical pixels. |
 | `mouse_down` | `(button) -> bool` | Held. |
-| `mouse_pressed` | `(button) -> bool` | Edge (pressed this frame). |
+| `mouse_pressed` | `(button) -> bool` | Edge. |
 
-(Note: there is no `mouse_released` builtin — only down/pressed.)
+> [!NOTE]
+> There is **no** `mouse_released` builtin — only `mouse_down` / `mouse_pressed`.
 
 ### Audio
 
 | Builtin | Signature | Notes |
 |---------|-----------|-------|
-| `play_sound` | `(path)` | One-shot SFX (`.wav`/`.ogg`/`.mp3`), decoded and cached. |
-| `play_music` | `(path)` | Looping music; safely deferred to the first update tick. |
+| `play_sound` | `(path)` | One-shot SFX (`.wav`/`.ogg`/`.mp3`), cached. |
+| `play_music` | `(path)` | Looping music; decoded on a background goroutine after the first tick. |
 | `stop_music` | `()` | Stop and release the music player. |
 
 ### Math & geometry
 
 | Builtin | Signature | Notes |
 |---------|-----------|-------|
-| `math_sin` / `math_cos` | `(radians) -> float` | Trig. Angles in **radians**. |
-| `atan2` | `(y, x) -> float` | Returns **degrees** (pairs with `draw_sprite_ex` rotation). |
+| `math_sin` / `math_cos` | `(rad) -> float` | Trig (radians). |
+| `atan2` | `(y, x) -> float` | Returns **degrees** (pairs with `draw_sprite_ex`). |
 | `abs` | `(x) -> float` | Absolute value. |
-| `distance` | `(x1, y1, x2, y2) -> float` | Euclidean distance. |
-| `random` | `(min, max) -> int` | Inclusive random integer; swaps args if `max < min`. |
-| `point_in_rect` | `(px, py, x, y, w, h) -> bool` | Point inside AABB (top-left `x,y`). |
-| `rects_overlap` | `(x1,y1,w1,h1, x2,y2,w2,h2) -> bool` | AABB overlap test. |
-| `text_width` | `(str) -> int` | Pixel width of `str` in the current font (for centering). |
-| `load_font` | `(path, size) -> bool` | Load a TTF at pixel `size`, cached per path+size; becomes the active face for `draw_text`/`text_width`. Call in `on_load`. |
-| `len` | `(array|str|table) -> int` | Element/char/pair count. |
+| `distance` | `(x1,y1,x2,y2) -> float` | Euclidean distance. |
+| `random` | `(min, max) -> int` | Inclusive int; swaps args if `max < min`. |
+| `point_in_rect` | `(px,py,x,y,w,h) -> bool` | Point inside AABB (top-left). |
+| `rects_overlap` | `(x1,y1,w1,h1, x2,y2,w2,h2) -> bool` | AABB overlap. |
+| `len` | `(array\|str\|table) -> int` | Count. |
+| `cli_flag` | `(name) -> bool` | True if `-name` was passed on the command line. |
 
 ### Entity system (ECS)
 
-Entities are opaque integer ids. Fixed properties live in struct fields; any
-other key you pass in `create` lands in the entity's `Data` map for your own use.
-The engine auto-draws every live entity each frame (sprite + optional HP bar +
-hit-flash + shake jitter), so you never draw entities yourself.
-
-#### Spawn / death
+Entities are opaque `int` ids. Fixed props live in struct fields; any other key
+passed to `create` lands in the entity's `Data` map. The engine auto-draws every
+live entity each frame, so you never draw entities yourself.
 
 | Builtin | Signature | Notes |
 |---------|-----------|-------|
-| `create` | `(group, sprite, x, y, props_table) -> id` | Spawn an entity. `props` keys: `x,y,vx,vy,rot,spin,scale,w,h,ttl,hp,max_hp` plus any custom key. `w`/`h` become **half-extents** (`HW=w/2`); pass the sprite's full width/height for an accurate hitbox. Defaults: `hp=1, HasHP=true, ttl=-1` (infinite), `scale=1`, `MaxHP=spawn hp`. |
-| `kill` | `(id)` | Mark dead immediately; fires `on_death` once. |
-| `damage` | `(id, n) -> bool` | `HP -= n`; kills (and returns `true`) if `HasHP` and `HP <= 0`. |
-| `heal` | `(id, n)` | `HP += n`, capped at `MaxHP` (if set). |
-| `max_hp` | `(id, n)` | Set `MaxHP` and `HasHP=true`. |
-| `invuln_after` | `(id, ticks)` | Ignore collisions until `world.Tick + ticks`. Used to debounce player hits. |
-| `on_death` | `(id, fn)` | One-shot handler `fn(id)`, fired by `kill`/`damage`/ttl expiry (NOT by offscreen cull). |
-| `ttl_left` | `(id) -> int` | Remaining time-to-live ticks (`-1` if unset). |
-
-#### Read / write entity state
-
-| Builtin | Signature | Notes |
-|---------|-----------|-------|
-| `ent_get` | `(id, key) -> value` | Read `x,y,vx,vy,rot,spin,scale,hp,sprite,group` or any `Data` key. Returns `Null` if missing. |
-| `ent_set` | `(id, key, value)` | Set a core or `Data` field. Setting `hp` also sets `HasHP=true`. |
-
-#### Per-entity fx & steering
-
-| Builtin | Signature | Notes |
-|---------|-----------|-------|
-| `hp_bar` | `(id, dx, dy, w)` | Attach an HP bar at offset `(dx,dy)` (relative to entity center), width `w`. Auto-drawn, green→orange→red by %. |
-| `flash` | `(id, "#rrggbb", ticks)` | Tint the sprite (hit-flash) until `Tick + ticks`. |
-| `shake` | `(power, ticks)` | Screen shake; jitters entity draw positions, decays each frame. |
-| `knockback` | `(id, fx, fy, force)` | Push the entity away from point `(fx,fy)`. |
-| `seek` | `(id, x, y, speed)` | Set velocity toward `(x,y)` at `speed` (arrives exactly if within `speed`, i.e. no orbiting). |
-| `run_behavior` | `(id, tree)` | First-class declarative behavior tree (see below). Call every tick from an `ent_on_tick` closure. |
-| `ent_on_tick` | `(id, fn)` | Per-entity steering closure `fn(id)`, called every tick after motion. Use for AI. |
+| `create` | `(group, sprite, x, y, props) -> id` | Spawn. `props` (a `table{}`, required) keys: `vx,vy,rot,spin,scale,w,h,ttl,hp,max_hp` + custom. `w`/`h` are **full** extents (halved into half-extents). Defaults `hp=1, HasHP=true, ttl=-1`. |
+| `kill` | `(id)` | Mark dead; fires `on_death` once. |
+| `damage` | `(id, n) -> bool` | `HP -= n`; kills (returns `true`) if `HasHP && HP<=0`. |
+| `heal` | `(id, n)` | `HP += n`, capped at `MaxHP`. |
+| `max_hp` | `(id, n)` | Set `MaxHP`, `HasHP=true`. |
+| `invuln_after` | `(id, ticks)` | Ignore collisions until `Tick + ticks` (debounce). |
+| `on_death` | `(id, fn)` | One-shot `fn(id)`; fired by `kill`/`damage`/TTL, **not** off-screen cull. |
+| `ttl_left` | `(id) -> int` | Remaining TTL ticks (`-1` if unset). |
+| `ent_get` | `(id, key) -> value` | Read core or `Data` field (`Null` if missing). |
+| `ent_set` | `(id, key, value)` | Set core or `Data` field (setting `hp` sets `HasHP`). |
+| `ent_on_tick` | `(id, fn)` | Per-entity steering closure `fn(id)`, called each tick after motion. |
+| `hp_bar` | `(id, dx, dy, w)` | HP bar at offset `(dx,dy)`, width `w`; green→orange→red. |
+| `flash` | `(id, "#rrggbb", ticks)` | Hit-flash tint until `Tick + ticks`. |
+| `shake` | `(power, ticks)` | Screen shake; jitters entity draws, decays per frame. |
+| `knockback` | `(id, fx, fy, force)` | Push away from point `(fx,fy)`. |
+| `seek` | `(id, x, y, speed)` | Steer toward `(x,y)` at `speed` (arrives exactly; no orbiting). |
+| `run_behavior` | `(id, tree)` | Declarative behavior tree (see below). |
+| `nearest` | `(group, x, y) -> id` | Closest live entity in `group` (`-1` if none). |
+| `group_count` | `(group) -> int` | Live count. |
+| `group_ids` | `(group) -> array` | Live ids. |
+| `group_each` | `(group, fn)` | `fn(id)` for each live entity. |
+| `area_damage` | `(x, y, radius, dmg, group)` | Damage all in `group` within `radius` (squared). |
+| `collide` | `("a","b", fn(aId,bId))` | Fire `fn` on A×B overlap; invulnerable pairs skipped. Register in `on_load` (persists across `reset_world`). |
+| `every` | `(interval, fn)` | Repeat `fn` every `interval` ticks. |
+| `after` | `(interval, fn)` | `fn` once after `interval` ticks. |
+| `after_n` | `(interval, count, fn)` | `fn` `count` times, every `interval`, then stop. |
+| `reset_world` | `()` | Clear entities + timers; **keeps** `collide` rules. |
+| `set_world_paused` | `(bool)` | Freeze/unfreeze the whole simulation. |
 
 #### Behavior trees (`run_behavior`)
 
-Declarative AI nodes; the engine evaluates the tree each call and finishes
-with exactly one seek-style steer toward the nearest `player` entity.
+Declarative AI; the engine evaluates the tree each call and finishes with exactly
+one steer toward the nearest `player` entity.
 
 ```
-# condition node: test, then recurse into one branch
-run_behavior(id, table{cond: "hp_below", val: 2,
-                       "then": table{type: "flee", spd: 2.4},
-                       "else": table{type: "chase", spd: 2.6, y: 60}})
-# action node: chase = steer to the player (or altitude line y)
-#               flee  = steer to a mirrored away-point, clamped on-screen
+run_behavior(id, table{cond:"hp_below", val:2,
+                       "then": table{type:"flee", spd:2.4},
+                       "else": table{type:"chase", spd:2.6, y:60}})
 ```
 
 - Conditions: `hp_below` (`val`), `player_near` (`val` = distance). Branches
-  may nest more condition nodes.
-- Action fields: `spd` (default `2.0`), optional `y` fixed altitude line
-  instead of tracking the player's y.
-- Keys `"then"`/`"else"` must stay QUOTED — `else` is a reserved word in
-  Logos, so bare `else:` / `.else` won't parse.
+  may nest.
+- Actions: `chase` steers to the player (or a fixed `y` altitude line); `flee`
+  steers to a mirrored away-point, clamped on-screen. `spd` defaults to `2.0`.
+- `"then"` / `"else"` **must stay quoted** (`else` is reserved).
 
-#### Queries
+### How collisions work
 
-| Builtin | Signature | Notes |
-|---------|-----------|-------|
-| `nearest` | `(group, x, y) -> id` | Id of the closest live entity in `group` (`-1` if none). |
-| `group_each` | `(group, fn)` | Call `fn(id)` for each live entity in `group`. |
-| `group_count` | `(group) -> int` | Number of live entities in `group`. |
-| `group_ids` | `(group) -> array` | Array of live entity ids in `group`. |
-
-#### Area & world
-
-| Builtin | Signature | Notes |
-|---------|-----------|-------|
-| `area_damage` | `(x, y, radius, dmg, group)` | Damage every entity in `group` within `radius` (squared distance). Kills those that drop to ≤0 HP. Great for explosions/splashes. |
-| `reset_world` | `()` | Clear all entities + timers. **Keeps** `collide` rules (they're declared in `on_load`). |
-| `set_world_paused` | `(bool)` | Freeze/unfreeze the whole simulation (timers, motion, collisions, steering). Used for menu/pause/over/win. |
-
-### Rules & timers
-
-| Builtin | Signature | Notes |
-|---------|-----------|-------|
-| `collide` | `("a", "b", fn(a_id, b_id))` | Fire `fn` whenever an `a` overlaps a `b`. Pairs where either side is invulnerable are skipped. Register in `on_load` (persists across `reset_world`). |
-| `every` | `(interval, fn)` | Repeat `fn()` every `interval` ticks, forever. |
-| `after` | `(interval, fn)` | Call `fn()` once after `interval` ticks. |
-| `after_n` | `(interval, count, fn)` | Call `fn()` `count` times, every `interval` ticks, then stop. |
-| `ent_on_tick` | `(id, fn)` | See per-entity steering above. |
-
-Timers registered *from inside* a firing timer are handled safely (the engine
-snapshots the timer list before invoking callbacks, so new timers don't corrupt
-the iteration).
-
-### Utility (remaining)
-
-| Builtin | Signature | Notes |
-|---------|-----------|-------|
-| `cli_flag` | `(name) -> bool` | True if `-name` was passed on the command line (e.g. `-auto`). |
-| `preload_sprite` | `(path) -> bool` | Load + decode a sprite now; returns `true` on success. Call in `on_load` to avoid first-frame hitch. |
-
----
-
-## How collisions actually work
-
-- Hitboxes are **axis-aligned boxes centered on `(x,y)`**. `overlaps(a,b)` is:
-  `abs(a.X-b.X) < a.HW+b.HW && abs(a.Y-b.Y) < a.HH+b.HH`.
-- `HW = w/2`, `HH = h/2` from the `create` props. **Set `w`/`h` to the sprite's
-  full pixel size** — tiny values (e.g. 4×4) make bullets pass *through* enemies
-  because the boxes never overlap. (This was a real, confusing bug.)
-- A `collide` rule's closure runs once per **overlapping pair per frame**, unless
-  either entity is invulnerable (`InvUntil > Tick`) — so a bullet won't "multi-hit"
-  a ship every frame; and `invuln_after(pid, 60)` stops the player taking repeated
-  hits while blinking.
-- Entities that drift far offscreen are **silently culled** (margin 90px right/
-  left/bottom, 270px above). Culling does **not** fire `on_death` — don't rely on
-  death logic for things that fly off the edge.
-- `on_death` fires exactly once, from `kill()`, `damage()` (lethal), or TTL expiry.
-
----
-
-## Gotchas & lessons
-
-1. **`let` inside `if` doesn't bind** the next statement in a top-level function.
-   Declare `let` at the function top, or inline the value. (`let` in `for` loops
-   and closures is fine.)
-2. **Default entity HP is 1** — a fresh `create` with no `hp` dies on the first
-   `damage`. Give ships/bosses `hp: N`.
-3. **`overlaps` is centered** — size `w`/`h` to the sprite, not a guess.
-4. **`area_damage(..., 99, "ships")` one-shots** whatever it hits (99 > any HP).
-   Use a smaller number if you want ships to survive a splash.
-5. **`frame_t` keeps counting** during menu/pause/over (only the *world* pauses).
-   Difficulty/`diff()` tied to `frame_t` will creep even on non-play screens —
-   cosmetic, but be aware.
-6. **`mouse_released` is not a builtin** — only `mouse_down` / `mouse_pressed`.
-7. **Hot reload injects edits into a live game** — edit a scratch copy or have the
-   player close the game first, or you'll ship half-finished code into their run.
-8. **Bosses/big entities need a big `w`/`h`** or they're unhittable; attach an
-   `hp_bar` with a negative `dy` (above the sprite).
+- Hitboxes are **axis-aligned boxes centered on `(x,y)`**:
+  `abs(a.X-b.X) < a.HW+b.HW && abs(a.Y-b.Y) < a.HH+b.HH`, with `HW=w/2`. Pass
+  the sprite's **full** pixel size for `w`/`h` — tiny values let fast bullets
+  tunnel through enemies.
+- A `collide` closure fires once per overlapping pair per frame unless either
+  side is invulnerable, so a bullet won't multi-hit a ship every frame.
+- Entities that drift far off-screen are **silently culled** (no `on_death`).
+- `on_death` fires exactly once (from `kill`, lethal `damage`, or TTL expiry).
 
 ---
 
 ## Project layout
 
 ```
-main.go        wires VM + Game + bindings, RunGame (~25 lines)
-engine.go      Game struct, drawCmd queue, Update/Draw/Layout, input polling,
-               font/sprite/audio helpers, hot reload
-vm.go          newVM() (sandboxed), loadScript(), callScript()
-bindings.go    ALL vm.Register builtins (this is the API surface)
-ecs.go         World: entities, timers, collide rules, simulate(), drawEntities()
-memory.md      agent working notes (bug stories, status, conventions)
-README.md      this file
+main.go                  wires VM + Game + bindings, then RunGame (~25 lines)
+engine.go                Game struct, drawCmd queue, Update/Draw/Layout, input,
+                          font/sprite/audio helpers, hot reload
+vm.go                    newVM() (sandboxed), loadScript(), callScript()
+bindings.go              ALL vm.Register builtins — this is the API surface
+ecs.go                   World, Entity, simulate(), collide rules, drawEntities()
+headless_check_test.go   go test ./...  (verification: TestHeadlessDemo2 / -Breakout)
+memory.md                agent working notes (bug stories, status, conventions)
 demo/
-  main.lgs     the VOID RUNNER game script (all gameplay lives here)
-  *.png,*.wav,*.ogg   game assets (gitignored — copy them in; don't commit)
-headless_check_test.go  go test -run TestHeadlessDemo2  (verification harness)
+  void_runner/main.lgs   the VOID RUNNER game script + assets
+  breakout/main.lgs      the BREAKOUT game script + assets
 ```
-
-Build targets (from `Makefile`): `make` (Wayland, default), `make x11`,
-`make run`. Engine entry: `go run . <scriptdir>/main.lgs [-auto]`.
 
 ---
 
-## Verifying changes
+## Limitations
 
-After editing `demo/void_runner/main.lgs`, run the headless harness (no window needed):
+- **No vectors/gravity/constraints.** Balls move at constant speed; "physics"
+  is hand-written scalar math.
+- **No volume control** on `play_sound` / `play_music` (full gain only).
+- **No sprite tinting** beyond the `flash()` hit-flash; no normal/round
+  hitboxes (AABB only).
+- **Brute-force collisions** — O(A×B) per group pair per tick. Fine for
+  hundreds of entities, not thousands.
+- **Behavior trees are minimal** — 2 conditions × 2 actions, no sequences,
+  selectors, or blackboards.
+- **No persistence** — nothing writes to disk (sandbox forbids file I/O), no
+  high-score table.
+- **Hot reload** resets script state to defaults on each reload.
 
-```sh
-go test -run TestHeadlessDemo2
-```
+---
 
-It loads the script, runs `on_load`, calls `start_game`, ticks 3000 frames with
-the bot, then pokes `on_draw_back` / `on_draw_front` / `draw_hud`. Any parse or
-runtime error fails the test — this is how syntax/logic regressions surface
-without a human at the keyboard.
+## Topics
 
-For real feel (difficulty curve, boss timing, input), a human must play it:
-launch `go run . demo/void_runner/main.lgs` and exercise menu → play → pause → over → win.
+Suggested GitHub repository topics (set these when the repo is published):
 
+`game-engine` · `ebiten` · `golang` · `2d-game-engine` · `logos` ·
+`game-dev` · `ecs` · `scripting-language` · `breakout` · `shoot-em-up`
 
+---
+
+## Credits
+
+`logos2d` would not exist without the **Logos** scripting language and virtual
+machine that it hosts:
+
+- **Logos** — <https://github.com/codetesla51/logos> (v0.4.9)
+
+Logos provides the parser, interpreter, and sandbox; `logos2d` adds the Ebiten
+runtime and the game-engine builtins on top of it.
+
+## License
+
+Released under the [MIT License](LICENSE) — copyright © 2026 Oladele Usman.
+Built on the [Logos](https://github.com/codetesla51/logos) scripting language
+(v0.4.9), which carries its own separate license.

@@ -24,6 +24,7 @@ let gt = 0               // effect clock
 let laser_until = 0      // gt timestamps; effect active while gt < *_until
 let strong_until = 0
 let combo = 0
+let level = 1
 
 fn load_font_asset() {
     load_font("kenvector_future.ttf", 12)
@@ -38,11 +39,20 @@ fn spawn_paddle() {
 }
 
 // serve attaches a ball to the paddle; SPACE launches it
+// serve speed creeps up per level so later levels play faster
+fn level_speed() {
+    let s = BALL_BASE + (level - 1) * 0.2
+    if s > 3.4 {
+        s = 3.4
+    }
+    return s
+}
+
 fn serve_ball() {
     let bid = create("ball", "ballGrey.png", ent_get(pid, "x"), H - 34, table{
         scale: 0.5, w: 9, h: 9, spin: 10,
         vx: 0, vy: 0,
-        spd: BALL_BASE,
+        spd: level_speed(),
         attached: true
     })
     ent_on_tick(bid, fn(id) { ball_tick(id) })
@@ -220,8 +230,7 @@ fn make_brick(cell, kind) {
             state = "win"
             set_world_paused(true)
             play_sound("win.ogg")
-        }
-    })
+        }    })
 }
 
 fn build_bricks() {
@@ -362,15 +371,15 @@ fn fire_lasers() {
 
 // ---------------- rules ----------------
 
-fn start_game() {
+// start a fresh LEVEL: keeps score/lives, new random layout.
+// reset_world clears entities+timers but keeps collide rules.
+fn start_level() {
     reset_world()
-    score = 0
-    lives = 3
-    combo = 0
     laser_until = 0
     strong_until = 0
+    combo = 0
     state = "play"
-    set_title("BREAKOUT")
+    set_title("BREAKOUT — LEVEL ${level}")
     spawn_paddle()
     build_bricks()
     serve_ball()
@@ -381,6 +390,15 @@ fn start_game() {
             }
         }
     })
+}
+
+// full restart from the menu or after game over
+fn start_game() {
+    reset_world()
+    score = 0
+    lives = 3
+    level = 1
+    start_level()
 }
 
 fn register_rules() {
@@ -514,9 +532,17 @@ fn on_update(dt) {
         steer_paddle()
     } else {
         if key_pressed("enter") {
-            set_world_paused(false)
-            start_game()
-            play_sound("confirm.ogg")
+            if state == "win" {
+                // cleared the level: advance, keep score/lives
+                level += 1
+                set_world_paused(false)
+                start_level()
+                play_sound("confirm.ogg")
+            } else {
+                set_world_paused(false)
+                start_game()
+                play_sound("confirm.ogg")
+            }
         }
     }
 }
@@ -546,6 +572,8 @@ fn any_attached() {
 
 fn on_draw_front() {
     if state == "play" || state == "over" || state == "win" {
+        let lv = "LEVEL ${level}"
+        draw_text(lv, (W - text_width(lv)) / 2, 8, "#7fdbff")
         draw_text("SCORE ${score}", 8, 8, "#e8ecf2")
         if combo > 1 {
             draw_text("COMBO x${combo}", 8, 22, "#f1c40f")
@@ -576,8 +604,8 @@ fn on_draw_front() {
     }
     if state == "win" {
         panel(70, 88, 180, 64)
-        draw_centered("YOU WIN!", 100, "#2ecc71")
+        draw_centered("LEVEL ${level} CLEAR!", 100, "#2ecc71")
         draw_centered("SCORE ${score}", 116, "#e8ecf2")
-        draw_centered("ENTER TO PLAY AGAIN", 132, "#e8ecf2")
+        draw_centered("ENTER FOR LEVEL ${level + 1}", 132, "#e8ecf2")
     }
 }

@@ -14,16 +14,18 @@ const H = 240
 const COOLDOWN_BLUE = 8
 const COOLDOWN_RAPID = 5
 const COOLDOWN_TWIN = 9
+const COOLDOWN_ROCKET = 32
 const WEAPON_DURATION = 600
 
-const METEOR_INTERVAL_START = 70
-const METEOR_INTERVAL_MIN = 18
+const METEOR_INTERVAL_START = 90
+const METEOR_INTERVAL_MIN = 40
 
 const PTS_METEOR = 20
 const PTS_SHIP = 15
-const PTS_WARSHIP = 150
-const PTS_MOTHER = 300
-const MOTHER_HP = 12
+const METEOR_INTERVAL_START = 90
+const METEOR_INTERVAL_MIN = 40
+const BOSS_SCORE = 1200      // reach this and the VOID RUNNER shows up
+const BOSS_HP = 50
 
 // ---------------- state (rules only — no world arrays!) ----------------
 let state = "menu"        // menu | play | pause | over
@@ -31,19 +33,23 @@ let hp = 3
 let score = 0
 let kills = 0
 let blink_t = 0
+let pvx = 0.0              // player velocity X (inertia-based movement)
 let frame_t = 0
 let cooldown = 0
 let weapon = "blue"
 let weapon_t = 0
 let shield_t = 0
+let combo = 0            // current kill-streak multiplier
+let combo_t = 0          // ticks left before the streak resets
 let music_on = true
 let over_t = 0
 let spawn_t = 30
-let foe_armed = 360       // next warship arrival
-let mother_wave = 900     // next mother duo arrival
+let ship_armed = 240     // ticks until the first enemy wave (don't spawn instantly)
+let boss_spawned = false // has the climactic boss appeared yet?
 let pid = 0               // the player entity id
 let stars_far = []
 let stars_near = []
+let decor_far = []        // parallax world decor (stations, buildings)
 let booms = []            // visual-only juice (not gameplay entities)
 let parts = []
 let auto = cli_flag("auto")
@@ -62,6 +68,7 @@ fn filter(arr, pred) {
 fn init_stars() {
     stars_far = []
     stars_near = []
+    decor_far = []
     for i in range(0, 36, 1) {
         let s = table{x: random(0, W), y: random(0, H)}
         stars_far = push(stars_far, s)
@@ -70,6 +77,23 @@ fn init_stars() {
         let s = table{x: random(0, W), y: random(0, H)}
         stars_near = push(stars_near, s)
     }
+    // seed a couple of distant decor props so the world never feels empty
+    for i in range(0, 3, 1) {
+        decor_far = push(decor_far, spawn_decor_props())
+    }
+}
+
+fn spawn_decor_props() {
+    let roll = random(1, 3)
+    let img = "station_small.png"
+    if roll == 2 {
+        img = "station_big.png"
+    }
+    if roll == 3 {
+        img = "bldg_b.png"
+    }
+    let sc = 0.18 + random(0, 14) / 100.0
+    return table{img: img, x: random(0, W), y: random(0, H), sc: sc, drift: 0.18 + random(0, 6) / 100.0}
 }
 
 fn burst(x, y, n, c) {
@@ -93,8 +117,17 @@ fn explode_at(x, y, color) {
     play_sound("explosion.wav")
 }
 
+fn rocket_boom(x, y) {
+    boom_at(x, y)
+    burst(x, y, 14, "#ff8800")
+    shake(5, 8)
+    play_sound("explosion.wav")
+}
+
 fn drop_powerup(x, y) {
-    let roll = random(1, 4)
+    // never flood the screen — at most 2 powerups live at once
+    if group_count("powerups") < 2 {
+    let roll = random(1, 5)
     let kind = "rapid"
     if roll == 2 {
         kind = "twin"
@@ -105,7 +138,15 @@ fn drop_powerup(x, y) {
     if roll == 4 {
         kind = "heart"
     }
-    create("powerups", "pu_" + kind + ".png", x, y, table{vy: 1.2, scale: 0.45, w: 14, h: 14, kind: kind})
+    if roll == 5 {
+        kind = "rocket"
+    }
+    let spr = "pu_" + kind + ".png"
+    if kind == "rocket" {
+        spr = "pu_rocket.png"
+    }
+    create("powerups", spr, x, y, table{vy: 1.2, scale: 0.5, w: 18, h: 18, kind: kind})
+    }
 }
 
 // ---------------- lifecycle ----------------
@@ -116,18 +157,21 @@ fn start_game() {
     score = 0
     kills = 0
     blink_t = 0
+    pvx = 0.0
     cooldown = 0
     spawn_t = 30
+    ship_armed = 240
+    boss_spawned = false
     weapon = "blue"
     weapon_t = 0
     shield_t = 0
+    combo = 0
+    combo_t = 0
     booms = []
     parts = []
-    foe_armed = frame_t + 360
-    mother_wave = frame_t + 900
     init_stars()
     // the player is just another entity — spawned last so it draws on top
-    pid = create("player", "player.png", 160, 212, table{scale: 0.22, w: 10, h: 14})
+    pid = create("player", "player.png", 160, 212, table{scale: 0.22, w: 20, h: 16})
     over_t = 0
     stop_music()
     play_music("music.ogg")
@@ -139,12 +183,6 @@ fn start_game() {
 fn on_load() {
     preload_sprite("player.png")
     preload_sprite("meteor.png")
-    preload_sprite("ufo.png")
-    preload_sprite("ufoBlue.png")
-    preload_sprite("ufoGreen.png")
-    preload_sprite("enemy.png")
-    preload_sprite("enemy_blue.png")
-    preload_sprite("enemy_green.png")
     preload_sprite("bullet.png")
     preload_sprite("laser_green.png")
     preload_sprite("laser_red.png")
@@ -153,6 +191,7 @@ fn on_load() {
     preload_sprite("pu_twin.png")
     preload_sprite("pu_shield.png")
     preload_sprite("pu_heart.png")
+    preload_sprite("pu_rocket.png")
     preload_sprite("meteor_brown.png")
     preload_sprite("meteor_gray.png")
     preload_sprite("meteor_red.png")
@@ -160,12 +199,7 @@ fn on_load() {
     preload_sprite("eship_red.png")
     preload_sprite("eship_blue.png")
     preload_sprite("eship_green.png")
-    preload_sprite("planet_a.png")
-    preload_sprite("planet_b.png")
-    preload_sprite("planet_c.png")
     preload_sprite("station_big.png")
-    preload_sprite("station_small.png")
-    preload_sprite("bldg_a.png")
     preload_sprite("bldg_b.png")
     preload_sprite("rocket.png")
     play_music("music.ogg")
@@ -184,9 +218,7 @@ fn register_rules() {
         knockback(m, ent_get(b, "x"), ent_get(b, "y"), 2.0)
         let died = damage(m, 1)
         if died {
-            score += PTS_METEOR
-            kills += 1
-            if random(1, 6) == 1 {
+            if random(1, 3) == 1 {
                 drop_powerup(ent_get(m, "x") + 10, ent_get(m, "y"))
             }
         } else {
@@ -194,10 +226,11 @@ fn register_rules() {
         }
     })
 
-    // bullets pop obstacle ships instantly
+    // bullets chip the ship's 3 HP (flash on each hit); dies on the 3rd
     collide("bullets", "ships", fn(b, e) {
         kill(b)
-        damage(e, 99)
+        flash(e, "#ffffff", 5)
+        damage(e, 1)
     })
 
     // bullets can shoot down enemy lasers mid-air
@@ -205,23 +238,6 @@ fn register_rules() {
         kill(b)
         kill(eb)
         burst(ent_get(eb, "x"), ent_get(eb, "y"), 3, "#ff2222")
-    })
-
-    // warship takes hits
-    collide("bullets", "warship", fn(b, f) {
-        kill(b)
-        play_sound("hit.wav")
-        flash(f, "#ff00ff", 5)
-        damage(f, 1)
-    })
-
-    // mother ships take hits
-    collide("bullets", "mothers", fn(b, ms) {
-        kill(b)
-        play_sound("hit.wav")
-        burst(ent_get(b, "x"), ent_get(b, "y") + 8, 2, "#7fdbff")
-        flash(ms, "#7fdbff", 5)
-        damage(ms, 1)
     })
 
     // everything that hurts the player
@@ -240,7 +256,6 @@ fn register_rules() {
         burst(ent_get(eb, "x"), ent_get(eb, "y"), 6, "#ff2222")
         hurt_player()
     })
-    collide("warship", "player", fn(f, p) { hurt_player() })
 
     // powerups get collected
     collide("powerups", "player", fn(pu, p) {
@@ -248,10 +263,49 @@ fn register_rules() {
         kill(pu)
     })
 
+    // rockets: heavy splash vs the small fry, solid punch vs bosses
+    collide("rockets", "meteors", fn(r, m) {
+        rocket_boom(ent_get(r, "x"), ent_get(r, "y"))
+        area_damage(ent_get(r, "x"), ent_get(r, "y"), 26, 99, "meteors")
+        area_damage(ent_get(r, "x"), ent_get(r, "y"), 26, 99, "ships")
+        kill(r)
+    })
+    collide("rockets", "ships", fn(r, s) {
+        rocket_boom(ent_get(r, "x"), ent_get(r, "y"))
+        area_damage(ent_get(r, "x"), ent_get(r, "y"), 26, 99, "meteors")
+        area_damage(ent_get(r, "x"), ent_get(r, "y"), 26, 2, "ships")
+        kill(r)
+    })
+
+    // ===== the VOID RUNNER boss =====
+    collide("bullets", "boss", fn(b, e) {
+        kill(b)
+        flash(e, "#ffffff", 4)
+        damage(e, 1)
+    })
+    collide("rockets", "boss", fn(r, e) {
+        rocket_boom(ent_get(r, "x"), ent_get(r, "y"))
+        area_damage(ent_get(r, "x"), ent_get(r, "y"), 30, 12, "boss")
+        area_damage(ent_get(r, "x"), ent_get(r, "y"), 26, 99, "meteors")
+        area_damage(ent_get(r, "x"), ent_get(r, "y"), 26, 99, "ships")
+        kill(r)
+    })
+    collide("boss", "player", fn(e, p) {
+        hurt_player()
+        flash(e, "#ff5555", 6)
+    })
+
     // survival trickle
     every(60, fn() {
         if state == "play" {
             score += 5
+        }
+    })
+
+    // steady power-up trickle so they always show up (still capped at 2)
+    every(420, fn() {
+        if state == "play" {
+            drop_powerup(random(40, W - 40), 24)
         }
     })
 }
@@ -290,6 +344,10 @@ fn apply_powerup(kind) {
             hp += 1
         }
         score += 25
+    }
+    if kind == "rocket" {
+        weapon = "rocket"
+        weapon_t = WEAPON_DURATION
     }
 }
 
@@ -337,6 +395,17 @@ fn on_update(dt) {
         return 0
     }
 
+    if state == "win" {
+        over_t += 1
+        set_world_paused(true)
+        update_fx()
+        if key_pressed("enter") || (auto && over_t > 150) {
+            start_game()
+            play_sound("powerup.wav")
+        }
+        return 0
+    }
+
     // ======== play ========
     if key_pressed("p") {
         state = "pause"
@@ -349,21 +418,50 @@ fn on_update(dt) {
     steer_player()
     update_weapon_timers()
 
-    // spawner: denser the longer you survive
+    // spawner: ramps up slowly, and we HARD-CAP how many are live at once
+    // so the screen never floods with a wall of rocks
     spawn_t -= 1
     if spawn_t <= 0 {
-        spawn_meteor()
-        if random(1, 2) == 1 {
-            spawn_ship()
+        if group_count("meteors") < 6 {
+            spawn_meteor()
         }
-        let iv = METEOR_INTERVAL_START - frame_t / 150
+        let iv = METEOR_INTERVAL_START - frame_t / 200
         if iv < METEOR_INTERVAL_MIN {
             iv = METEOR_INTERVAL_MIN
         }
         spawn_t = iv
     }
 
-    maybe_arm_foes()
+    // the climactic boss appears once you've scored enough AND survived a
+    // while — and it takes over the field (no more normal ship waves)
+    if !boss_spawned && score >= BOSS_SCORE && frame_t >= 3600 {
+        spawn_boss()
+    }
+
+    // enemy spaceships: drop in from the top (1-2 at a time), NEVER instantly,
+    // and the waves get tighter + a touch larger as difficulty climbs
+    if group_count("boss") == 0 {
+        let d = diff()
+        let cap = 3
+        if d > 1.6 {
+            cap = 4
+        }
+        let live = group_count("ships")
+        if frame_t >= ship_armed && live < cap {
+            let n = 1
+            if random(1, 3) == 1 {
+                n = 2
+            }
+            if live + n > cap {
+                n = cap - live
+            }
+            for i in range(0, n, 1) {
+                spawn_ship()
+            }
+            // hold off the next wave — but less long the harder it gets
+            ship_armed = frame_t + (360 + random(0, 360)) / d
+        }
+    }
 
     update_fx()
 
@@ -379,27 +477,50 @@ fn on_update(dt) {
 fn steer_player() {
     // NOTE: player movement is 100% manual here and we deliberately do NOT
     // set vx on the player entity — simulate() would move it a second time.
-    let vx = 0.0
+    // Instead we keep our own pvx and feed it inertia + banking tilt.
+    let ax = 0.0
     if auto {
-        vx = bot_acc()
+        ax = bot_acc()
     } else {
+        let dir = 0
         if key_down("right") || key_down("d") {
-            vx = 2.4
+            dir = 1
         }
         if key_down("left") || key_down("a") {
-            vx = -2.4
+            dir = -1
         }
+        ax = dir * 0.5
+    }
+    // inertia: builds speed gradually, friction bleeds it off when idle
+    pvx = pvx * 0.85 + ax
+    if pvx > 2.8 {
+        pvx = 2.8
+    }
+    if pvx < -2.8 {
+        pvx = -2.8
     }
 
     // clamp inside walls
-    let nx = ent_get(pid, "x") + vx
+    let nx = ent_get(pid, "x") + pvx
     if nx < 8 {
         nx = 8
+        pvx = 0
     }
     if nx > W - 8 {
         nx = W - 8
+        pvx = 0
     }
     ent_set(pid, "x", nx)
+
+    // banking tilt: nose leans into the turn
+    let bank = pvx * 7.0
+    if bank > 20 {
+        bank = 20
+    }
+    if bank < -20 {
+        bank = -20
+    }
+    ent_set(pid, "rot", bank)
 
     if blink_t > 0 {
         blink_t -= 1
@@ -432,13 +553,21 @@ fn shoot() {
     if weapon == "red" {
         img = "laser_red.png"
         cooldown = COOLDOWN_TWIN
-        create("bullets", "laser_red.png", bx - 5, 200, table{vy: -6, scale: 0.3, w: 3, h: 7})
+        create("bullets", "laser_red.png", bx - 5, 200, table{vy: -6, scale: 0.3, w: 4, h: 10})
+    }
+    if weapon == "rocket" {
+        cooldown = COOLDOWN_ROCKET
+        create("rockets", "rocket.png", bx, 200, table{vy: -2.6, scale: 0.05, rot: 0, w: 8, h: 14})
+        play_sound("shoot.wav")
+        burst(bx, 196, 3, "#ffaa55")
+        return 0
     }
     if weapon == "blue" {
         cooldown = COOLDOWN_BLUE
     }
-    create("bullets", img, bx, 200, table{vy: -6, scale: 0.3, w: 3, h: 7})
+    create("bullets", img, bx, 200, table{vy: -6, scale: 0.3, w: 4, h: 10})
     play_sound("shoot.wav")
+    burst(bx, 196, 2, "#ffffff")
 }
 
 fn update_weapon_timers() {
@@ -456,24 +585,53 @@ fn update_weapon_timers() {
     }
 }
 
+// difficulty ramps slowly with survival time — ships fire faster and waves
+// come more often the longer you last
+fn diff() {
+    let d = 1.0 + frame_t / 6000.0
+    if d > 2.2 {
+        d = 2.2
+    }
+    return d
+}
+
+// every kill feeds the combo: faster kills = bigger multiplier (capped)
+fn score_kill(base, x, y) {
+    combo += 1
+    if combo > 9 {
+        combo = 9
+    }
+    combo_t = 150
+    kills += 1
+    score += base * combo
+    burst(x, y, combo > 1 ? 4 : 2, "#f1c40f")
+}
+
 // ---------------- spawning ----------------
 
 fn spawn_meteor() {
+    // scales are size-normalized so every variant reads ~20px on screen
+    // (meteor.png is 43px; brown/gray/red/white are ~215px each)
     let roll = random(1, 5)
     let img = "meteor.png"
+    let sc = 0.46
     if roll == 2 {
         img = "meteor_brown.png"
+        sc = 0.093
     }
     if roll == 3 {
         img = "meteor_gray.png"
+        sc = 0.094
     }
     if roll == 4 {
         img = "meteor_red.png"
+        sc = 0.093
     }
     if roll == 5 {
         img = "meteor_white.png"
+        sc = 0.091
     }
-    let sc = 0.38 + random(0, 18) / 100.0
+    sc = sc + sc * random(0, 6) / 100.0
     let mid = create("meteors", img, random(8, W - 30), -30, table{
               vx: random(-8, 8) / 10.0,
               vy: random(8, 16) / 10.0,
@@ -481,113 +639,192 @@ fn spawn_meteor() {
               spin: random(-3, 3),
               scale: sc,
               hp: 2,
-              w: 19 * sc / 0.45, h: 19 * sc / 0.45
+              w: 22, h: 22
           })
     on_death(mid, fn(id) {
         explode_at(ent_get(id, "x") + 10, ent_get(id, "y") + 10, "#a07050")
+        score_kill(PTS_METEOR, ent_get(id, "x") + 10, ent_get(id, "y") + 10)
     })
 }
 
 fn spawn_ship() {
+    // each ship is its OWN personality with its own brain — they don't all
+    // behave the same.
+    //   red   = GUNNER  : patient, slides to line up on you, aimed shots
+    //   blue  = WEAVER  : restless, patrols back & forth on its OWN, sprays
+    //   green = HUNTER  : aggressive, homes in hard and leads its shots
     let roll = random(1, 3)
-    let img = "enemy.png"
+    let img = "eship_red.png"
+    let ssc = 0.34
+    let kind = "gunner"
+    let fire = 90
+    let track = 0.3
+    let hy = 40 + random(0, 70)
+    let bw = 34
+    let bh = 32
     if roll == 2 {
-        img = "enemy_blue.png"
+        img = "eship_blue.png"
+        ssc = 0.25
+        kind = "weaver"
+        fire = 70
+        hy = 30 + random(0, 50)
+        bh = 22
     }
     if roll == 3 {
-        img = "enemy_green.png"
+        img = "eship_green.png"
+        ssc = 0.198
+        kind = "hunter"
+        fire = 55
+        track = 0.9
+        hy = 55 + random(0, 60)
+        bh = 30
     }
-    let sid = create("ships", img, random(8, W - 26), -24, table{
-              vx: random(-10, 10) / 10.0,
-              vy: random(9, 15) / 10.0,
-              rot: 180,
-              scale: 0.45,
-              w: 13, h: 13
+    let sx = random(20, W - 20)
+    // ramp difficulty: later ships fire faster
+    let d = diff()
+    fire = fire / d
+    let sid = create("ships", img, sx, -24, table{
+              vx: 0, vy: 0, rot: 0,
+              scale: ssc,
+              w: bw, h: bh,
+              hp: 3, max_hp: 3,
+              kind: kind,
+              hover: hy,
+              track: track,
+              fire: fire,
+              phase: random(0, 100) / 10.0,
+              strafe: (random(0, 1) == 0 ? -1 : 1),
+              shoot_t: 30 + random(0, 40)
           })
+    ent_on_tick(sid, fn(id) {
+        let y = ent_get(id, "y")
+        let hy = ent_get(id, "hover")
+        if y < hy - 0.5 {
+            // still easing down into position (smooth, not a fixed step)
+            ent_set(id, "y", y + (hy - y) * 0.08)
+        } else {
+            let kind = ent_get(id, "kind")
+            let x = ent_get(id, "x")
+            let px = ent_get(pid, "x")
+            let target = x
+            if kind == "weaver" {
+                // patrols on its own sine wave — smooth, never snaps
+                let ph = ent_get(id, "phase")
+                target = (W / 2) + math_sin(frame_t / 90.0 + ph) * (W / 2 - 20)
+            } else {
+                // gunner + hunter ease toward your column (hunter harder)
+                let tk = ent_get(id, "track")
+                target = x + (px - x) * tk
+            }
+            if target < 14 {
+                target = 14
+            }
+            if target > W - 14 {
+                target = W - 14
+            }
+            // smooth horizontal glide
+            ent_set(id, "x", x + (target - x) * 0.06)
+            // gentle, per-ship bob so they don't look stiff
+            let ph = ent_get(id, "phase")
+            ent_set(id, "y", hy + math_sin(frame_t / 40.0 + ph) * 5.0)
+            let st = ent_get(id, "shoot_t") - 1
+            if st <= 0 {
+                let aim = 0.0
+                if kind == "gunner" {
+                    aim = (px - x) * 0.02
+                }
+                if kind == "hunter" {
+                    aim = (px - x) * 0.04
+                }
+                if kind == "weaver" {
+                    aim = (random(0, 1) == 0 ? -1 : 1) * random(0, 10) / 10.0
+                }
+                if aim > 1.8 {
+                    aim = 1.8
+                }
+                if aim < -1.8 {
+                    aim = -1.8
+                }
+                let vy = 3.0
+                if kind == "hunter" {
+                    vy = 3.6
+                }
+                vy = vy * diff()
+                if vy > 7.0 {
+                    vy = 7.0
+                }
+                create("ebullets", "laser_red.png", ent_get(id, "x"), ent_get(id, "y") + 10, table{vx: aim, vy: vy, rot: 180, scale: 0.35, w: 3, h: 8})
+                play_sound("efire.wav")
+                st = ent_get(id, "fire") + random(0, 30)
+            }
+            ent_set(id, "shoot_t", st)
+        }
+    })
     on_death(sid, fn(id) {
         explode_at(ent_get(id, "x"), ent_get(id, "y"), "#e74c3c")
-    })
-}
-
-// warship + mother ships arrive on schedule; their whole AI is one
-// steering closure each — attached straight onto the entity.
-fn maybe_arm_foes() {
-    if group_count("warship") == 0 && frame_t >= foe_armed {
-        let fhp = 6 + kills / 4
-        if fhp > 20 {
-            fhp = 20
+        score_kill(PTS_SHIP, ent_get(id, "x"), ent_get(id, "y"))
+        shake(6, 8)
+        if random(1, 4) == 1 {
+            drop_powerup(ent_get(id, "x"), ent_get(id, "y"))
         }
-let wid = create("warship", "ufo.png", 160, 55, table{scale: 0.38, hp: fhp, max_hp: fhp, w: 26, h: 26, shoot_t: 80, rot: 180})
-        hp_bar(wid, 0, -20, 30)
-        on_death(wid, fn(id) {
-            score += PTS_WARSHIP
-            kills += 1
-            explode_at(ent_get(id, "x"), ent_get(id, "y"), "#ff00ff")
-            shake(8, 12)
-            drop_powerup(ent_get(id, "x"), ent_get(id, "y") + 12)
-            foe_armed = frame_t + random(600, 1100)
-        })
-        print("WARSHIP INCOMING!")
-        ent_on_tick(wid, fn(id) {
-            // chase the player's column, bob, fire straight down
-            let dx = ent_get(pid, "x") - ent_get(id, "x")
-            if dx > 1 {
-                ent_set(id, "x", ent_get(id, "x") + 0.5)
-            }
-            if dx < -1 {
-                ent_set(id, "x", ent_get(id, "x") - 0.5)
-            }
-            ent_set(id, "y", 55.0 + math_sin(frame_t / 30.0) * 8.0)
-            let t = ent_get(id, "shoot_t") - 1
-            if t <= 0 {
-                create("ebullets", "laser_red.png", ent_get(id, "x"), ent_get(id, "y") + 12, table{vy: 3.2, rot: 180, scale: 0.3, w: 3, h: 7})
-                play_sound("efire.wav")
-                t = 42
-            }
-            ent_set(id, "shoot_t", t)
-        })
-    }
-
-    if group_count("mothers") == 0 && frame_t >= mother_wave {
-        spawn_mother(78, "ufoBlue.png", 0)
-        spawn_mother(W - 78, "ufoGreen.png", 2)
-        print("MOTHER SHIPS INBOUND!")
-        mother_wave = frame_t + 1500
-    }
+    })
 }
 
-fn spawn_mother(cx, img, phase) {
-    let mid = create("mothers", img, cx, -40, table{hp: MOTHER_HP, scale: 0.62, w: 34, h: 24, ph: phase, bx: cx, shoot_t: 100 + random(0, 40)})
-    hp_bar(mid, 0, -22, 36)
-    on_death(mid, fn(id) {
-        score += PTS_MOTHER
-        kills += 1
-        explode_at(ent_get(id, "x"), ent_get(id, "y"), "#3498db")
-        shake(8, 12)
-        drop_powerup(ent_get(id, "x"), ent_get(id, "y") + 12)
-    })
-    ent_on_tick(mid, fn(id) {
+fn spawn_boss() {
+    boss_spawned = true
+    let bid = create("boss", "eship_green.png", W / 2, -70, table{
+              vx: 0, vy: 0, rot: 0,
+              scale: 0.78,
+              w: 130, h: 110,
+              hp: BOSS_HP, max_hp: BOSS_HP,
+              shoot_t: 90
+          })
+    hp_bar(bid, 0, -64, 84)
+    ent_on_tick(bid, fn(id) {
         let y = ent_get(id, "y")
-        if y < 52 {
-            ent_set(id, "y", y + 1.1)
-        }
-        let base = ent_get(id, "bx")
-        ent_set(id, "x", base + math_sin(frame_t / 45.0 + ent_get(id, "ph")) * 24.0)
-        // aimed shot every ~1.5s once in position
-        let st = ent_get(id, "shoot_t") - 1
-        if st <= 0 && y > 20 {
-            let aim = (ent_get(pid, "x") - ent_get(id, "x")) * 0.02
-            if aim > 2.2 {
-                aim = 2.2
+        let hy = 54
+        if y < hy {
+            ent_set(id, "y", y + 1.0)
+        } else {
+            // sweep side to side
+            let nx = (W / 2) + math_sin(frame_t / 55.0) * (W / 2 - 55)
+            ent_set(id, "x", nx)
+            let hpnow = ent_get(id, "hp")
+            let enraged = hpnow < BOSS_HP / 2
+            let st = ent_get(id, "shoot_t") - 1
+            if st <= 0 {
+                let x = ent_get(id, "x")
+                let y2 = ent_get(id, "y")
+                let px = ent_get(pid, "x")
+                let aim = (px - x) * 0.02
+                if aim > 1.4 {
+                    aim = 1.4
+                }
+                if aim < -1.4 {
+                    aim = -1.4
+                }
+                // aimed shot down the player's column
+                create("ebullets", "laser_red.png", x, y2 + 24, table{vx: aim, vy: 3.2, rot: 180, scale: 0.42, w: 4, h: 9})
+                // enraged: also spit a 3-way spread
+                if enraged {
+                    create("ebullets", "laser_red.png", x - 16, y2 + 24, table{vx: aim - 0.7, vy: 3.2, rot: 180, scale: 0.42, w: 4, h: 9})
+                    create("ebullets", "laser_red.png", x + 16, y2 + 24, table{vx: aim + 0.7, vy: 3.2, rot: 180, scale: 0.42, w: 4, h: 9})
+                }
+                play_sound("efire.wav")
+                st = enraged ? 38 : 64
             }
-            if aim < -2.2 {
-                aim = -2.2
-            }
-            create("ebullets", "laser_red.png", ent_get(id, "x"), ent_get(id, "y") + 14, table{vx: aim, vy: 3.2, rot: 180, scale: 0.3, w: 3, h: 7})
-            play_sound("efire.wav")
-            st = 75 + random(0, 50)
+            ent_set(id, "shoot_t", st)
         }
-        ent_set(id, "shoot_t", st)
+    })
+    on_death(bid, fn(id) {
+        let x = ent_get(id, "x")
+        let y = ent_get(id, "y")
+        explode_at(x, y, "#e74c3c")
+        shake(12, 28)
+        score += 800
+        play_sound("powerup.wav")
+        state = "win"
+        set_world_paused(true)
     })
 }
 
@@ -604,9 +841,25 @@ fn scroll_stars() {
     }
     filter(stars_far, move)
     filter(stars_near, move)
+    let move_d = fn(d) {
+        d.y = d.y + d.drift
+        if d.y > H + 40 {
+            // wrap back to the top, keep the same prop (stable parallax loop)
+            d.x = random(0, W)
+            d.y = -40
+        }
+        return true
+    }
+    filter(decor_far, move_d)
 }
 
 fn update_fx() {
+    if combo_t > 0 {
+        combo_t -= 1
+        if combo_t == 0 {
+            combo = 0
+        }
+    }
     booms = filter(booms, fn(bx) {
         bx.t = bx.t + 1
         return bx.t < 16
@@ -630,6 +883,10 @@ fn on_draw_back() {
     for s in stars_near {
         draw_rect(s.x, s.y, 2, 3, "#ddeeff")
     }
+    // distant world decor: stations + buildings scrolling slowly behind play
+    for d in decor_far {
+        draw_sprite_ex(d.img, d.x, d.y, d.sc, 0)
+    }
 }
 
 fn on_draw_front() {
@@ -644,9 +901,9 @@ fn on_draw_front() {
         return 0
     }
 
-    // shield bubble follows the player
+    // shield bubble follows the player (gently pulsing)
     if shield_t > 0 {
-        draw_sprite_ex("shield.png", ent_get(pid, "x"), 212, 0.22, 0)
+        draw_sprite_ex("shield.png", ent_get(pid, "x"), 212, 0.22 + math_sin(frame_t / 12.0) * 0.02, 0)
     }
     if cooldown > COOLDOWN_BLUE {
         draw_circle(ent_get(pid, "x"), 200, 2, "#f1c40f")
@@ -664,6 +921,36 @@ fn on_draw_front() {
         draw_circle(p.x, p.y, (20 - p.t) / 7 + 1, p.c)
     }
 
+    // floating labels above each power-up so they're never ambiguous
+    for pu in group_ids("powerups") {
+        let k = ent_get(pu, "kind")
+        let lbl = "?"
+        let c = "#ffffff"
+        if k == "rapid" {
+            lbl = "RAPID"
+            c = "#2ecc71"
+        }
+        if k == "twin" {
+            lbl = "TWIN"
+            c = "#e74c3c"
+        }
+        if k == "shield" {
+            lbl = "SHIELD"
+            c = "#3498db"
+        }
+        if k == "heart" {
+            lbl = "+LIFE"
+            c = "#e74c3c"
+        }
+        if k == "rocket" {
+            lbl = "ROCKET"
+            c = "#f39c12"
+        }
+        let px = ent_get(pu, "x")
+        let py = ent_get(pu, "y")
+        draw_text(lbl, px - text_width(lbl) / 2, py - 16, c)
+    }
+
     // enemy health bars are attached to the entities themselves now
 
     draw_hud()
@@ -673,6 +960,15 @@ fn on_draw_front() {
     }
     if state == "over" {
         draw_box_line("GAME OVER", "final score: ${score}", "#e74c3c", "#ffffff")
+    }
+    if state == "win" {
+        draw_rect(0, 92, W, 104, "#04060c")
+        draw_text("VOID RUNNER DESTROYED", 160 - text_width("VOID RUNNER DESTROYED") / 2, 108, "#2ecc71")
+        draw_text("the void goes quiet at last", 160 - text_width("the void goes quiet at last") / 2, 128, "#7fdbff")
+        draw_text("FINAL SCORE  ${score}", 160 - text_width("FINAL SCORE  ${score}") / 2, 152, "#f1c40f")
+        if frame_t % 60 < 42 {
+            draw_text("PRESS ENTER TO RUN AGAIN", 160 - text_width("PRESS ENTER TO RUN AGAIN") / 2, 178, "#ffffff")
+        }
     }
 }
 
@@ -690,8 +986,14 @@ fn draw_hud() {
     if weapon == "red" {
         draw_text("TWIN ${weapon_t / 60}", 312 - text_width("TWIN ${weapon_t / 60}"), 26, "#e74c3c")
     }
+    if weapon == "rocket" {
+        draw_text("RCKT ${weapon_t / 60}", 312 - text_width("RCKT ${weapon_t / 60}"), 26, "#f39c12")
+    }
     if shield_t > 0 {
         draw_text("SHLD ${shield_t / 60}", 312 - text_width("SHLD ${shield_t / 60}"), 40, "#3498db")
+    }
+    if combo > 1 {
+        draw_text("x${combo} COMBO", 160 - text_width("x${combo} COMBO") / 2, 40, "#f1c40f")
     }
 }
 
@@ -715,16 +1017,6 @@ fn bot_should_shoot() {
     }
     for e in group_ids("ships") {
         if abs(ent_get(e, "x") - bx) < 11 && ent_get(e, "y") > -10 && ent_get(e, "y") < 206 {
-            return true
-        }
-    }
-    for ms in group_ids("mothers") {
-        if abs(ent_get(ms, "x") - bx) < 18 && ent_get(ms, "y") > 10 {
-            return true
-        }
-    }
-    for wid in group_ids("warship") {
-        if abs(ent_get(wid, "x") - bx) < 16 {
             return true
         }
     }
@@ -753,14 +1045,10 @@ fn bot_pick() {
             }
         }
         for e in group_ids("ships") {
-            let ey = ent_get(e, "y")
-            let t = (206 - (ey + 15)) / ent_get(e, "vy")
-            if t > 0 && t < 70 {
-                let fx = ent_get(e, "x") + ent_get(e, "vx") * t
-                let near = 20 - abs(fx - c)
-                if near > 0 {
-                    s -= near * (90.0 - t) / 50.0
-                }
+            // ships hover in the upper field, so line up under them for points
+            let near = 18 - abs(ent_get(e, "x") - c)
+            if near > 0 && ent_get(e, "y") < 150 {
+                s += near * 0.5
             }
         }
         for eb in group_ids("ebullets") {
@@ -788,13 +1076,6 @@ fn bot_pick() {
                 s += near * pull
             }
         }
-        if group_count("warship") > 0 {
-            let wx = ent_get(group_ids("warship")[0], "x")
-            let near = 10 - abs(wx - c)
-            if near > 0 {
-                s += near * 0.4
-            }
-        }
 
         if s > best_s {
             best_s = s
@@ -811,13 +1092,13 @@ fn bot_acc() {
     let d = bot_target - ent_get(pid, "x")
     let a = 0.0
     if d > 7 {
-        a = 2.4
+        a = 0.5
     }
     if d < -7 {
-        a = -2.4
+        a = -0.5
     }
     if a == 0.0 {
-        a = math_sin(frame_t / 13.0) * 0.35
+        a = math_sin(frame_t / 13.0) * 0.18
     }
     return a
 }

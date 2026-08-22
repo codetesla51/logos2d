@@ -361,19 +361,7 @@ func registerBindings(vm *interpreter.Interpreter, g *Game) {
 
 	vm.Register("seek", func(args ...logos.Object) logos.Object {
 		if e := getEnt(args); e != nil {
-			dx := toF(args[1]) - e.X
-			dy := toF(args[2]) - e.Y
-			d := math.Sqrt(dx*dx + dy*dy)
-			sp := toF(args[3])
-			if d > 0.0001 {
-				if d < sp {
-					sp = d // arrive exactly, don't orbit the target
-				}
-				e.VX = dx / d * sp
-				e.VY = dy / d * sp
-			} else {
-				e.VX, e.VY = 0, 0
-			}
+			steerToward(e, toF(args[1]), toF(args[2]), toF(args[3]))
 		}
 		return &logos.Null{}
 	})
@@ -392,6 +380,24 @@ func registerBindings(vm *interpreter.Interpreter, g *Game) {
 			}
 		}
 		return &logos.Integer{Value: best}
+	})
+
+	// run_behavior(id, tree) — first-class declarative behavior tree.
+	// Condition node: table{cond: "hp_below" | "player_near", val: N,
+	//                       "then": <node>, "else": <node>}
+	// Action node:    table{type: "chase" | "flee", spd: F, y: F}
+	// Branches may nest condition nodes (recurses). Optional action fields:
+	// spd (default 2.0), y = fixed altitude line instead of the player's y.
+	// Intended to be called every tick from an ent_on_tick closure; each
+	// call ends in exactly one steerToward (same math as seek).
+	vm.Register("run_behavior", func(args ...logos.Object) logos.Object {
+		g.world.active = true
+		if e := getEnt(args); e != nil {
+			if tree, ok := args[1].(*logos.Table); ok {
+				runBehaviorNode(g, e, tree)
+			}
+		}
+		return &logos.Null{}
 	})
 
 	vm.Register("group_each", func(args ...logos.Object) logos.Object {
@@ -732,4 +738,136 @@ func registerBindings(vm *interpreter.Interpreter, g *Game) {
 		}
 		return &logos.Bool{Value: g.mousePressed(b)}
 	})
+}
+
+// ---------------- behavior trees (first-class AI primitive) ----------------
+
+// tblField reads a string-keyed field from a script table; nil if absent.
+// Logos stores table keys as "STRING:<name>".
+func tblField(t *logos.Table, key string) logos.Object {
+	if v, ok := t.Pairs["STRING:"+key]; ok {
+		return v
+	}
+	return nil
+}
+
+// tblStr reads a string field; ok=false when missing or not a string.
+func tblStr(t *logos.Table, key string) (string, bool) {
+	if s, ok := tblField(t, key).(*logos.String); ok {
+		return s.Value, true
+	}
+	return "", false
+}
+
+// tblNum reads a numeric field (int or float); ok=false when missing.
+func tblNum(t *logos.Table, key string) (float64, bool) {
+	switch v := tblField(t, key).(type) {
+	case *logos.Integer:
+		return float64(v.Value), true
+	case *logos.Float:
+		return v.Value, true
+	}
+	return 0, false
+}
+
+// steerToward is the shared seek math: set velocity toward a point,
+// arriving exactly instead of orbiting it.
+func steerToward(e *Entity, x, y, speed float64) {
+	dx := x - e.X
+	dy := y - e.Y
+	d := math.Sqrt(dx*dx + dy*dy)
+	if d > 0.0001 {
+		if d < speed {
+			speed = d
+		}
+		e.VX = dx / d * speed
+		e.VY = dy / d * speed
+	} else {
+		e.VX, e.VY = 0, 0
+	}
+}
+
+// nearestOf returns the closest living "player"-group entity to e.
+func nearestOf(g *Game, e *Entity) *Entity {
+	var best *Entity
+	bestD := math.MaxFloat64
+	for _, o := range g.world.group("player") {
+		dx, dy := o.X-e.X, o.Y-e.Y
+		if d := dx*dx + dy*dy; d < bestD {
+			bestD = d
+			best = o
+		}
+	}
+	return best
+}
+
+// runBehaviorNode evaluates one behavior-tree node for an entity:
+// action nodes dispatch straight to steering; condition nodes test and
+// recurse into their "then"/"else" branch. Unknown conds/types no-op.
+func runBehaviorNode(g *Game, e *Entity, t *logos.Table) {
+	if typ, ok := tblStr(t, "type"); ok {
+		runBehaviorAction(g, e, t, typ)
+		return
+	}
+	cond, _ := tblStr(t, "cond")
+	val, hasVal := tblNum(t, "val")
+	fired := false
+	switch cond {
+	case "hp_below":
+		fired = hasVal && e.HasHP && float64(e.HP) < val
+	case "player_near":
+		if hasVal {
+			if p := nearestOf(g, e); p != nil {
+				dx, dy := p.X-e.X, p.Y-e.Y
+				fired = dx*dx+dy*dy < val*val
+			}
+		}
+	}
+	branch := "else"
+	if fired {
+		branch = "then"
+	}
+	if n, ok := tblField(t, branch).(*logos.Table); ok {
+		runBehaviorNode(g, e, n)
+	}
+}
+
+// runBehaviorAction turns an action node into a single seek-style steer.
+func runBehaviorAction(g *Game, e *Entity, act *logos.Table, typ string) {
+	p := nearestOf(g, e)
+	if p == nil {
+		return // nobody to chase or flee from
+	}
+	spd := 2.0
+	if v, ok := tblNum(act, "spd"); ok {
+		spd = v
+	}
+	switch typ {
+	case "chase":
+		ty := p.Y
+		if alt, ok := tblNum(act, "y"); ok {
+			ty = alt // hold a fixed altitude line instead of diving
+		}
+		steerToward(e, p.X, ty, spd)
+	case "flee":
+		// mirror point away from the player, clamped on-screen
+		fx := e.X + (e.X-p.X)*2
+		fy := e.Y + (e.Y-p.Y)*2
+		if alt, ok := tblNum(act, "y"); ok {
+			fy = alt
+		}
+		if fx < 14 {
+			fx = 14
+		}
+		if fx > gameW-14 {
+			fx = gameW - 14
+		}
+		if fy < 20 {
+			fy = 20
+		}
+		if fy > gameH-20 {
+			fy = gameH - 20
+		}
+		steerToward(e, fx, fy, spd)
+	}
 }

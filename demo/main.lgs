@@ -609,96 +609,14 @@ fn score_kill(base, x, y) {
 
 // ---------------- spawning ----------------
 
-// ---------------- declarative behavior trees ----------------
-
-// run_behavior(id, node) — tiny behavior-tree interpreter, pure Logos.
-// Call from ent_on_tick every tick; dispatches to nearest()/seek().
+// run_behavior(id, tree) is a first-class engine builtin now (see
+// bindings.go): declarative behavior trees, callable from ent_on_tick.
 //   condition node: table{cond: "hp_below" | "player_near", val: N,
 //                         "then": <node>, "else": <node>}
 //   action node:    table{type: "chase" | "flee", spd: F, y: F}
-// "then"/"else" are QUOTED keys: else is a reserved keyword in Logos, so
-// bare `else:` / `.else` won't parse — read them with node["else"] etc.
-// "then" may be a condition node (recurses) or an action node.
-// Optional action fields: spd (default 2.0), y = fixed altitude line
-// (hover height instead of tracking the player's y).
-fn run_behavior(id, node) {
-    // action nodes have no cond — dispatch by which field is present
-    if node.type {
-        run_action(id, node)
-    } else {
-        let ok = false
-        // NOTE: missing fields read as NULL and NULL == "x" is a type
-        // error, so truthiness-guard a field before comparing it
-        if node.cond {
-            if node.cond == "hp_below" {
-                if node.val {
-                    ok = ent_get(id, "hp") < node.val
-                }
-            } else {
-                if node.cond == "player_near" {
-                    if node.val {
-                        let tid = nearest("player", ent_get(id, "x"), ent_get(id, "y"))
-                        ok = distance(ent_get(id, "x"), ent_get(id, "y"), ent_get(tid, "x"), ent_get(tid, "y")) < node.val
-                    }
-                }
-            }
-        }
-        if ok {
-            if node["then"] {
-                run_behavior(id, node["then"])
-            }
-        } else {
-            if node["else"] {
-                run_behavior(id, node["else"])
-            }
-        }
-    }
-}
-
-fn run_action(id, act) {
-    let x = ent_get(id, "x")
-    let y = ent_get(id, "y")
-    let tid = nearest("player", x, y)
-    let px = ent_get(tid, "x")
-    let py = ent_get(tid, "y")
-    let spd = 2.0
-    if act.spd {
-        spd = act.spd
-    }
-    let alt = 0.0
-    if act.y {
-        alt = act.y
-    }
-    if act.type == "chase" {
-        let ty = py
-        if alt > 0 {
-            ty = alt
-        }
-        seek(id, px, ty, spd)
-    } else {
-        if act.type == "flee" {
-            // mirror point away from the player, clamped on-screen
-            let fx = x + (x - px) * 2.0
-            let fy = y + (y - py) * 2.0
-            if alt > 0 {
-                fy = alt
-            }
-            if fx < 14 {
-                fx = 14
-            }
-            if fx > W - 14 {
-                fx = W - 14
-            }
-            if fy < 20 {
-                fy = 20
-            }
-            if fy > H - 20 {
-                fy = H - 20
-            }
-            seek(id, fx, fy, spd)
-        }
-    }
-}
+// Branches nest; optional action fields spd (default 2.0) and y (fixed
+// altitude line). Note: `else` is a reserved word in Logos, so the keys
+// must stay quoted.
 
 fn spawn_meteor() {
     // scales are size-normalized so every variant reads ~20px on screen

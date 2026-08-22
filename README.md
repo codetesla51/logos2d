@@ -353,7 +353,29 @@ hit-flash + shake jitter), so you never draw entities yourself.
 | `shake` | `(power, ticks)` | Screen shake; jitters entity draw positions, decays each frame. |
 | `knockback` | `(id, fx, fy, force)` | Push the entity away from point `(fx,fy)`. |
 | `seek` | `(id, x, y, speed)` | Set velocity toward `(x,y)` at `speed` (arrives exactly if within `speed`, i.e. no orbiting). |
+| `run_behavior` | `(id, tree)` | First-class declarative behavior tree (see below). Call every tick from an `ent_on_tick` closure. |
 | `ent_on_tick` | `(id, fn)` | Per-entity steering closure `fn(id)`, called every tick after motion. Use for AI. |
+
+#### Behavior trees (`run_behavior`)
+
+Declarative AI nodes; the engine evaluates the tree each call and finishes
+with exactly one seek-style steer toward the nearest `player` entity.
+
+```
+# condition node: test, then recurse into one branch
+run_behavior(id, table{cond: "hp_below", val: 2,
+                       "then": table{type: "flee", spd: 2.4},
+                       "else": table{type: "chase", spd: 2.6, y: 60}})
+# action node: chase = steer to the player (or altitude line y)
+#               flee  = steer to a mirrored away-point, clamped on-screen
+```
+
+- Conditions: `hp_below` (`val`), `player_near` (`val` = distance). Branches
+  may nest more condition nodes.
+- Action fields: `spd` (default `2.0`), optional `y` fixed altitude line
+  instead of tracking the player's y.
+- Keys `"then"`/`"else"` must stay QUOTED — `else` is a reserved word in
+  Logos, so bare `else:` / `.else` won't parse.
 
 #### Queries
 

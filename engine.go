@@ -70,6 +70,7 @@ type Game struct {
 	musicGen             uint64 // invalidates in-flight decodes
 	audioMu              sync.Mutex
 	scriptMod            time.Time // main.lgs mtime for hot reload
+	injected             map[ebiten.Key]bool // test key injection (headless)
 }
 
 // audioContext returns the process-wide Ebiten audio context, creating it
@@ -190,6 +191,16 @@ func (g *Game) sprite(path string) *ebiten.Image {
 // pollInput snapshots held-state and swaps previous/current so pressed/
 // released edges can be computed per frame. Must run once per tick before
 // on_update.
+// InjectKey queues a key press for the next tick, merged into keysCurr
+// after real polling. Exists so headless tests can drive menu/input paths
+// that need genuine key edges.
+func (g *Game) InjectKey(k ebiten.Key) {
+	if g.injected == nil {
+		g.injected = map[ebiten.Key]bool{}
+	}
+	g.injected[k] = true
+}
+
 func (g *Game) pollInput() {
 	g.keysPrev = g.keysCurr
 	g.keysCurr = make(map[ebiten.Key]bool)
@@ -198,6 +209,10 @@ func (g *Game) pollInput() {
 			g.keysCurr[k] = true
 		}
 	}
+	for k := range g.injected {
+		g.keysCurr[k] = true
+	}
+	g.injected = nil
 
 	g.mousePrev = g.mouseCurr
 	g.mouseCurr = make(map[ebiten.MouseButton]bool)

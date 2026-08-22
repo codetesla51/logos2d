@@ -44,13 +44,15 @@ func headless(t *testing.T, dir string) {
 		}
 	}
 	// simulate an ENTER press: menu/game-over screens should restart into
-	// gameplay through the real input path
-	g.keysCurr[ebiten.KeyEnter] = true
+	// gameplay through the real input path; then SPACE (launch/shoot)
+	g.InjectKey(ebiten.KeyEnter)
 	if err := g.Update(); err != nil {
 		t.Fatalf("enter update error: %v", err)
 	}
-	delete(g.keysCurr, ebiten.KeyEnter)
-	g.keysPrev[ebiten.KeyEnter] = true
+	g.InjectKey(ebiten.KeySpace)
+	if err := g.Update(); err != nil {
+		t.Fatalf("space update error: %v", err)
+	}
 	for i := 0; i < 600; i++ {
 		if err := g.Update(); err != nil {
 			t.Fatalf("post-enter update %d error: %v", i, err)

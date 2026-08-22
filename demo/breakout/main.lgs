@@ -1,8 +1,14 @@
 // BREAKOUT — brick breaker on the logos2d declarative ECS.
 // Ball physics: velocity lives directly in vx/vy (the engine integrates it).
-// Walls bounce in ent_on_tick bounds checks; paddle/bricks via collide()
-// rules. fix_vy() guarantees the ball never goes near-horizontal, so it
-// always makes progress and can never "hang" rattling side to side.
+// Walls bounce in ent_on_tick bounds checks; paddle/bricks/pickups via
+// collide() rules. fix_vy() guarantees vertical progress so trajectories
+// can never go near-horizontal.
+//
+// Pre-launch: served balls sit on the paddle until SPACE launches them.
+// Special bricks (star icon) drop pickups: LASER (balls auto-shoot the
+// nearest brick), MULTI (two extra balls), POWER (ball smashes through,
+// double damage), COLOR (repaints the balls). Brick layouts are randomized
+// every game.
 
 let W = 320              // logical screen (window_width() == 320)
 let H = 240
@@ -13,11 +19,17 @@ let state = "menu"       // menu | play | over | win
 let score = 0
 let lives = 3
 let pid = 0              // paddle entity id
-let ticks = 0            // global frame counter (juice timing)
+let ticks = 0            // frame counter (trail timing)
+let gt = 0               // effect clock
+let laser_until = 0      // gt timestamps; effect active while gt < *_until
+let strong_until = 0
+let combo = 0
 
 fn load_font_asset() {
     load_font("kenvector_future.ttf", 12)
 }
+
+// ---------------- entities ----------------
 
 fn spawn_paddle() {
     pid = create("paddle", "paddleBlu.png", W / 2, H - 16, table{
@@ -25,44 +37,60 @@ fn spawn_paddle() {
     })
 }
 
-fn spawn_ball() {
+// serve attaches a ball to the paddle; SPACE launches it
+fn serve_ball() {
     let bid = create("ball", "ballGrey.png", ent_get(pid, "x"), H - 34, table{
         scale: 0.5, w: 9, h: 9, spin: 10,
         vx: 0, vy: 0,
-        spd: BALL_BASE
+        spd: BALL_BASE,
+        attached: true
     })
-    // serve straight up with a slight random lean, exact speed
-    let vx = random(-12, 12) / 10.0
-    ent_set(bid, "vx", vx)
-    ent_set(bid, "vy", 0.0 - math_sqrt(BALL_BASE * BALL_BASE - vx * vx))
     ent_on_tick(bid, fn(id) { ball_tick(id) })
 }
 
+fn launch(id) {
+    ent_set(id, "attached", false)
+    let vx = random(-12, 12) / 10.0
+    let s = ent_get(id, "spd")
+    ent_set(id, "vx", vx)
+    ent_set(id, "vy", 0.0 - math_sqrt(s * s - vx * vx))
+    play_sound("confirm.ogg")
+}
+
 fn ball_tick(id) {
-    // motion trail: a fading star every other tick while the ball flies
-    ticks += 1
-    if ticks % 2 == 0 {
-        create("fx", "particleStar.png", ent_get(id, "x"), ent_get(id, "y"), table{
-            scale: 0.22, ttl: 9, spin: 8
-        })
-    }
-    let x = ent_get(id, "x")
-    if x < 8 {
-        ent_set(id, "x", 8)
-        ent_set(id, "vx", 0.0 - ent_get(id, "vx"))
-    } else {
-        if x > W - 8 {
-            ent_set(id, "x", W - 8)
-            ent_set(id, "vx", 0.0 - ent_get(id, "vx"))
+    // pre-launch: ride the paddle until SPACE
+    if ent_get(id, "attached") {
+        ent_set(id, "x", ent_get(pid, "x"))
+        ent_set(id, "y", ent_get(pid, "y") - 13)
+        if key_pressed("space") {
+            launch(id)
         }
-    }
-    let y = ent_get(id, "y")
-    if y < 8 {
-        ent_set(id, "y", 8)
-        ent_set(id, "vy", 0.0 - ent_get(id, "vy"))
     } else {
-        if y > H + 14 {
-            lose_ball(id)
+        // motion trail: a fading star every other tick while the ball flies
+        ticks += 1
+        if ticks % 2 == 0 {
+            create("fx", "particleStar.png", ent_get(id, "x"), ent_get(id, "y"), table{
+                scale: 0.22, ttl: 9, spin: 8
+            })
+        }
+        let x = ent_get(id, "x")
+        if x < 8 {
+            ent_set(id, "x", 8)
+            ent_set(id, "vx", 0.0 - ent_get(id, "vx"))
+        } else {
+            if x > W - 8 {
+                ent_set(id, "x", W - 8)
+                ent_set(id, "vx", 0.0 - ent_get(id, "vx"))
+            }
+        }
+        let y = ent_get(id, "y")
+        if y < 8 {
+            ent_set(id, "y", 8)
+            ent_set(id, "vy", 0.0 - ent_get(id, "vy"))
+        } else {
+            if y > H + 14 {
+                lose_ball(id)
+            }
         }
     }
 }
@@ -89,50 +117,25 @@ fn fix_vy(id) {
 
 fn lose_ball(id) {
     kill(id)
-    shake(10, 18)
-    burst(ent_get(id, "x"), H - 20)
-    lives = lives - 1
-    if lives <= 0 {
-        state = "over"
-        set_world_paused(true)
-        play_sound("game_over.ogg")
+    if group_count("ball") == 0 {
+        // last ball gone: pay a life, respawn if any remain
+        shake(10, 18)
+        burst(ent_get(id, "x"), H - 20)
+        lives = lives - 1
+        if lives <= 0 {
+            state = "over"
+            set_world_paused(true)
+            play_sound("game_over.ogg")
+        } else {
+            play_sound("ball_lost.ogg")
+            after(40, fn() { serve_ball() })
+        }
     } else {
         play_sound("ball_lost.ogg")
-        after(40, fn() { spawn_ball() })
     }
 }
 
-fn build_bricks() {
-    let imgs = ["element_red_square_glossy.png",
-                "element_yellow_square_glossy.png",
-                "element_green_square_glossy.png",
-                "element_blue_square_glossy.png",
-                "element_purple_square.png"]
-    for row in range(0, 5) {
-        let img = imgs[row]
-        for col in range(0, 10) {
-            let hp = 1
-            if row < 2 {
-                hp = 2
-            }
-            let bid = create("bricks", img, 22 + col * 31, 38 + row * 24, table{
-                scale: 0.75, w: 22, h: 22,
-                hp: hp                 // top two rows take 2 hits
-            })
-            on_death(bid, fn(id) {
-                burst(ent_get(id, "x"), ent_get(id, "y"))
-                shake(2, 5)
-                score += 25
-                play_sound("brick_break_${random(0, 4)}.ogg")
-                if group_count("bricks") == 0 {
-                    state = "win"
-                    set_world_paused(true)
-                    play_sound("win.ogg")
-                }
-            })
-        }
-    }
-}
+// ---------------- bricks ----------------
 
 fn burst(x, y) {
     for i in range(0, 4) {
@@ -143,19 +146,246 @@ fn burst(x, y) {
     }
 }
 
+// random layout every game: full/checker/pyramid/gaps + a few random holes
+fn layout_places(pat) {
+    let cells = []
+    for row in range(0, 5) {
+        for col in range(0, 10) {
+            let place = true
+            if pat == 1 {
+                if (row + col) % 2 == 1 {
+                    place = false
+                }
+            }
+            if pat == 2 {
+                if col < row || col > 9 - row {
+                    place = false
+                }
+            }
+            if pat == 3 {
+                if row % 2 == 1 && col % 2 == 1 {
+                    place = false
+                }
+            }
+            if pat == 0 {
+                if random(0, 9) == 0 {
+                    place = false
+                }
+            }
+            if place {
+                cells = push(cells, table{r: row, c: col})
+            }
+        }
+    }
+    return cells
+}
+
+fn make_brick(cell, kind) {
+    let row = cell.r
+    let col = cell.c
+    let hp = 1
+    if row < 2 {
+        hp = 2
+    }
+    let bid = create("bricks", cell.img, 22 + col * 31, 38 + row * 24, table{
+        scale: 0.75, w: 22, h: 22,
+        hp: hp
+    })
+    if kind != "" {
+        // mark it special + pin a spinning star on it so players can see
+        ent_set(bid, "pu", kind)
+        let iid = create("fx", "particleStar.png", ent_get(bid, "x"), ent_get(bid, "y"), table{
+            scale: 0.32, spin: 5, ttl: -1
+        })
+        ent_set(bid, "icon", iid)
+    }
+    on_death(bid, fn(id) {
+        burst(ent_get(id, "x"), ent_get(id, "y"))
+        shake(2, 5)
+        play_sound("brick_break_${random(0, 4)}.ogg")
+        combo = combo + 1
+        if combo > 5 {
+            combo = 5
+        }
+        score += 25 * combo
+        let ic = ent_get(id, "icon")
+        if ic {
+            kill(ic)
+        }
+        let k = ent_get(id, "pu")
+        if k {
+            drop_pickup(ent_get(id, "x"), ent_get(id, "y"), k)
+        }
+        if group_count("bricks") == 0 {
+            state = "win"
+            set_world_paused(true)
+            play_sound("win.ogg")
+        }
+    })
+}
+
+fn build_bricks() {
+    let imgs = ["element_red_square_glossy.png",
+                "element_yellow_square_glossy.png",
+                "element_green_square_glossy.png",
+                "element_blue_square_glossy.png",
+                "element_purple_square.png"]
+    let cells = layout_places(random(0, 3))
+    // deal exactly one pickup to 4 spread-out cells
+    let n = len(cells)
+    if n > 8 {
+        let kinds = ["laser", "multi", "power", "color"]
+        let base = random(0, n - 1)
+        let step = n / 4
+        for i in range(0, 4) {
+            let idx = (base + i * step + random(0, 2)) % n
+            cells[idx].pu = kinds[i]
+        }
+    }
+    for i in range(0, n) {
+        let cell = cells[i]
+        let r = cell.r
+        cell.img = imgs[r]
+        let kind = ""
+        if cell.pu {
+            kind = cell.pu
+        }
+        make_brick(cell, kind)
+    }
+}
+
+// ---------------- pickups ----------------
+
+fn drop_pickup(x, y, kind) {
+    let img = "particleStar.png"
+    if kind == "laser" {
+        img = "pu_rapid.png"
+    }
+    if kind == "multi" {
+        img = "pu_twin.png"
+    }
+    if kind == "power" {
+        img = "pu_rocket.png"
+    }
+    create("pickups", img, x, y, table{
+        vy: 1.1, spin: 5, scale: 0.7, w: 14, h: 14, kind: kind
+    })
+}
+
+fn spawn_clone(x, y, vx, vy) {
+    let s = math_sqrt(vx * vx + vy * vy)
+    let nid = create("ball", "ballGrey.png", x, y, table{
+        scale: 0.5, w: 9, h: 9, spin: 10,
+        vx: vx, vy: vy, spd: s
+    })
+    ent_on_tick(nid, fn(id) { ball_tick(id) })
+}
+
+// two extra balls, rotated +-40 degrees off a flying one
+fn multiball() {
+    let ids = group_ids("ball")
+    if len(ids) > 0 {
+        if len(ids) < 4 {
+            // clone a ball that is actually moving, never an attached one
+            let b = 0
+            for bid in ids {
+                if b == 0 {
+                    if !ent_get(bid, "attached") {
+                        b = bid
+                    }
+                }
+            }
+            if b > 0 {
+            let vx = ent_get(b, "vx")
+            let vy = ent_get(b, "vy")
+            let x = ent_get(b, "x") + 6
+            let y = ent_get(b, "y") - 6
+            let cs = math_cos(0.7)
+            let sn = math_sin(0.7)
+            spawn_clone(x, y, vx * cs - vy * sn, vx * sn + vy * cs)
+            spawn_clone(x, y, vx * cs + vy * sn, 0.0 - vx * sn + vy * cs)
+            }
+        }
+    }
+}
+
+fn recolor_balls() {
+    let ids = group_ids("ball")
+    for bid in ids {
+        if random(0, 1) == 0 {
+            ent_set(bid, "sprite", "ballBlue.png")
+        } else {
+            ent_set(bid, "sprite", "ballGrey.png")
+        }
+    }
+}
+
+fn apply_pickup(kind) {
+    score += 50
+    play_sound("confirm.ogg")
+    shake(2, 4)
+    if kind == "laser" {
+        laser_until = gt + 600
+    }
+    if kind == "multi" {
+        multiball()
+    }
+    if kind == "power" {
+        strong_until = gt + 480
+    }
+    if kind == "color" {
+        recolor_balls()
+    }
+}
+
+// each ball fires a shot aimed at its nearest brick
+fn fire_lasers() {
+    let ids = group_ids("ball")
+    for bid in ids {
+        let bx = ent_get(bid, "x")
+        let by = ent_get(bid, "y")
+        let tid = nearest("bricks", bx, by)
+        if tid > 0 {
+            let dx = ent_get(tid, "x") - bx
+            let dy = ent_get(tid, "y") - by
+            let d = math_sqrt(dx * dx + dy * dy)
+            if d > 1 {
+                create("bullets", "laser_green.png", bx, by, table{
+                    vx: dx / d * 6, vy: dy / d * 6,
+                    rot: atan2(dy, dx) + 90,
+                    scale: 0.5, w: 4, h: 4, ttl: 60
+                })
+            }
+        }
+    }
+}
+
+// ---------------- rules ----------------
+
 fn start_game() {
     reset_world()
     score = 0
     lives = 3
+    combo = 0
+    laser_until = 0
+    strong_until = 0
     state = "play"
     set_title("BREAKOUT")
     spawn_paddle()
     build_bricks()
-    spawn_ball()
+    serve_ball()
+    every(24, fn() {
+        if laser_until > gt {
+            if group_count("bricks") > 0 {
+                fire_lasers()
+            }
+        }
+    })
 }
 
 fn register_rules() {
     collide("ball", "paddle", fn(bid, plid) {
+        combo = 0
         // deflection by hit offset: center = straight up, edges = steep.
         // Speed is preserved exactly via sqrt(s^2 - vx^2).
         let off = (ent_get(bid, "x") - ent_get(plid, "x")) / 27.0
@@ -175,30 +405,36 @@ fn register_rules() {
     })
     collide("ball", "bricks", fn(bid, kid) {
         flash(kid, "#ffffff", 4)
-        damage(kid, 1)
-        // reflect on the axis of LEAST penetration (side hit flips vx,
-        // top/bottom hit flips vy) so bounces read naturally
-        let dx = ent_get(bid, "x") - ent_get(kid, "x")
-        let dy = ent_get(bid, "y") - ent_get(kid, "y")
-        let ox = 15.5 - abs(dx)
-        let oy = 15.5 - abs(dy)
-        if ox < oy {
-            ent_set(bid, "vx", 0.0 - ent_get(bid, "vx"))
+        let strong = strong_until > gt
+        if strong {
+            // smash through: double damage, no bounce
+            damage(kid, 2)
         } else {
-            ent_set(bid, "vy", 0.0 - ent_get(bid, "vy"))
-        }
-        fix_vy(bid)
-        // speed creeps up as bricks die, direction ratio preserved
-        let old = ent_get(bid, "spd")
-        let s = old * 1.03
-        if s > BALL_MAX {
-            s = BALL_MAX
-        }
-        if s > old {
-            let k = s / old
-            ent_set(bid, "vx", ent_get(bid, "vx") * k)
-            ent_set(bid, "vy", ent_get(bid, "vy") * k)
-            ent_set(bid, "spd", s)
+            damage(kid, 1)
+            // reflect on the axis of LEAST penetration (side hit flips vx,
+            // top/bottom hit flips vy) so bounces read naturally
+            let dx = ent_get(bid, "x") - ent_get(kid, "x")
+            let dy = ent_get(bid, "y") - ent_get(kid, "y")
+            let ox = 15.5 - abs(dx)
+            let oy = 15.5 - abs(dy)
+            if ox < oy {
+                ent_set(bid, "vx", 0.0 - ent_get(bid, "vx"))
+            } else {
+                ent_set(bid, "vy", 0.0 - ent_get(bid, "vy"))
+            }
+            fix_vy(bid)
+            // speed creeps up as bricks die, direction ratio preserved
+            let old = ent_get(bid, "spd")
+            let s = old * 1.03
+            if s > BALL_MAX {
+                s = BALL_MAX
+            }
+            if s > old {
+                let k = s / old
+                ent_set(bid, "vx", ent_get(bid, "vx") * k)
+                ent_set(bid, "vy", ent_get(bid, "vy") * k)
+                ent_set(bid, "spd", s)
+            }
         }
         let hp = ent_get(kid, "hp")
         if hp > 0 {
@@ -207,7 +443,21 @@ fn register_rules() {
         }
         invuln_after(bid, 2)
     })
+    collide("paddle", "pickups", fn(plid, uid) {
+        let k = ent_get(uid, "kind")
+        kill(uid)
+        burst(ent_get(uid, "x"), ent_get(uid, "y"))
+        apply_pickup(k)
+    })
+    collide("bullets", "bricks", fn(lid, kid) {
+        flash(kid, "#ffffff", 4)
+        damage(kid, 1)
+        kill(lid)
+        score += 10
+    })
 }
+
+// ---------------- input + ui ----------------
 
 fn steer_paddle() {
     let x = ent_get(pid, "x")
@@ -227,7 +477,16 @@ fn steer_paddle() {
 }
 
 fn draw_centered(str, y, c) {
-    draw_text(str, (W - text_width(str)) / 2, y, c)
+    let x = (W - text_width(str)) / 2
+    if x < 4 {
+        x = 4
+    }
+    draw_text(str, x, y, c)
+}
+
+fn panel(x, y, w, h) {
+    draw_rect(x - 2, y - 2, w + 4, h + 4, "#f1c40f")
+    draw_rect(x, y, w, h, "#12161f")
 }
 
 fn on_load() {
@@ -236,6 +495,10 @@ fn on_load() {
     preload_sprite("paddleBlu.png")
     preload_sprite("ballGrey.png")
     preload_sprite("particleStar.png")
+    preload_sprite("pu_rapid.png")
+    preload_sprite("pu_twin.png")
+    preload_sprite("pu_rocket.png")
+    preload_sprite("laser_green.png")
     preload_sprite("element_red_square_glossy.png")
     preload_sprite("element_yellow_square_glossy.png")
     preload_sprite("element_green_square_glossy.png")
@@ -246,6 +509,7 @@ fn on_load() {
 }
 
 fn on_update(dt) {
+    gt += 1
     if state == "play" {
         steer_paddle()
     } else {
@@ -261,23 +525,59 @@ fn on_draw_back() {
     draw_rect(0, 0, W, H, "#10141c")
 }
 
+fn secs_left(until) {
+    let left = until - gt
+    if left < 0 {
+        left = 0
+    }
+    return left / 60
+}
+
+fn any_attached() {
+    let ids = group_ids("ball")
+    let out = false
+    for bid in ids {
+        if ent_get(bid, "attached") {
+            out = true
+        }
+    }
+    return out
+}
+
 fn on_draw_front() {
     if state == "play" || state == "over" || state == "win" {
-        let sc = "SCORE ${score}"
+        draw_text("SCORE ${score}", 8, 8, "#e8ecf2")
+        if combo > 1 {
+            draw_text("COMBO x${combo}", 8, 22, "#f1c40f")
+        }
         let lv = "LIVES ${lives}"
-        draw_text(sc, 8, 8, "#e8ecf2")
         draw_text(lv, W - text_width(lv) - 8, 8, "#e8ecf2")
+        // active-effect badges, centered as a pair so nothing overflows
+        if laser_until > gt {
+            draw_text("LASER ${secs_left(laser_until)}", 118, 8, "#2ecc71")
+        }
+        if strong_until > gt {
+            draw_text("POWER ${secs_left(strong_until)}", 190, 8, "#e67e22")
+        }
+        if any_attached() {
+            draw_centered("SPACE TO LAUNCH", H - 40, "#7fdbff")
+        }
     }
     if state == "menu" {
+        panel(60, 84, 200, 72)
         draw_centered("BREAKOUT", 100, "#f1c40f")
         draw_centered("ENTER TO START", 124, "#e8ecf2")
     }
     if state == "over" {
-        draw_centered("GAME OVER", 108, "#e74c3c")
-        draw_centered("ENTER TO RETRY", 130, "#e8ecf2")
+        panel(70, 88, 180, 64)
+        draw_centered("GAME OVER", 100, "#e74c3c")
+        draw_centered("SCORE ${score}", 116, "#e8ecf2")
+        draw_centered("ENTER TO RETRY", 132, "#e8ecf2")
     }
     if state == "win" {
-        draw_centered("YOU WIN!", 108, "#2ecc71")
-        draw_centered("ENTER TO PLAY AGAIN", 130, "#e8ecf2")
+        panel(70, 88, 180, 64)
+        draw_centered("YOU WIN!", 100, "#2ecc71")
+        draw_centered("SCORE ${score}", 116, "#e8ecf2")
+        draw_centered("ENTER TO PLAY AGAIN", 132, "#e8ecf2")
     }
 }

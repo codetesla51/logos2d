@@ -284,7 +284,7 @@ fn drop_pickup(x, y, kind) {
         img = "pu_color.png"
     }
     create("pickups", img, x, y, table{
-        vy: 1.1, spin: 5, scale: 0.4, w: 12, h: 12, kind: kind
+        vy: 1.1, spin: 5, scale: 0.3, w: 10, h: 10, kind: kind
     })
 }
 
@@ -689,18 +689,39 @@ fn ai_steer() {
             best = bid
         }
     }
+    // a falling pickup entering the catch zone
+    let want_pu = -1
+    let wpu_y = -9999.0
+    for p in group_ids("pickups") {
+        let py = ent_get(p, "y")
+        let pv = ent_get(p, "vy")
+        if pv > 0 && py > 120 && py > wpu_y {
+            wpu_y = py
+            want_pu = p
+        }
+    }
+    // don't chase a pickup if the ball is low and in danger of being missed
+    let danger = false
     if best >= 0 {
-    let bx = ent_get(best, "x")
-    let by = ent_get(best, "y")
-    let vy = ent_get(best, "vy")
-    let target = ai_predict_x(best)
-    if by > H - 52 && vy > 0 {
-        let tx = brick_centroid_x()
-        if tx >= 0 {
-            let want = (tx - bx) / 60.0
-            if want > 1 { want = 1 }
-            if want < -1 { want = -1 }
-            target = bx - want * 24
+        danger = best_y > 150 && ent_get(best, "vy") > 0
+    }
+    let target = ent_get(pid, "x")
+    if want_pu >= 0 && !danger {
+        // go grab it
+        target = ent_get(want_pu, "x")
+    } else if best >= 0 {
+        let bx = ent_get(best, "x")
+        let by = ent_get(best, "y")
+        let vy = ent_get(best, "vy")
+        target = ai_predict_x(best)
+        if by > H - 52 && vy > 0 {
+            let tx = brick_centroid_x()
+            if tx >= 0 {
+                let want = (tx - bx) / 60.0
+                if want > 1 { want = 1 }
+                if want < -1 { want = -1 }
+                target = bx - want * 24
+            }
         }
     }
     let px = ent_get(pid, "x")
@@ -718,7 +739,6 @@ fn ai_steer() {
     if px < 28 { px = 28 }
     if px > W - 28 { px = W - 28 }
     ent_set(pid, "x", px)
-    }
 }
 
 fn on_draw_back() {
@@ -754,12 +774,13 @@ fn on_draw_front() {
         }
         let lv = "LIVES ${lives}"
         draw_text(lv, W - text_width(lv) - 8, 8, "#e8ecf2")
-        // active-effect badges, centered as a pair so nothing overflows
+        // active-effect badges on the second row (below LEVEL) so they
+        // never collide with the centered LEVEL text
         if laser_until > gt {
-            draw_text("LASER ${secs_left(laser_until)}", 118, 8, "#2ecc71")
+            draw_text("LASER ${secs_left(laser_until)}", 116, 20, "#2ecc71")
         }
         if strong_until > gt {
-            draw_text("POWER ${secs_left(strong_until)}", 190, 8, "#e67e22")
+            draw_text("POWER ${secs_left(strong_until)}", 192, 20, "#e67e22")
         }
         if any_attached() {
             draw_centered("SPACE TO LAUNCH", H - 40, "#7fdbff")

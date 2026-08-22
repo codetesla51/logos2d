@@ -280,6 +280,9 @@ fn drop_pickup(x, y, kind) {
     if kind == "power" {
         img = "pu_rocket.png"
     }
+    if kind == "color" {
+        img = "pu_color.png"
+    }
     create("pickups", img, x, y, table{
         vy: 1.1, spin: 5, scale: 0.7, w: 14, h: 14, kind: kind
     })
@@ -560,6 +563,7 @@ fn on_load() {
     preload_sprite("pu_rapid.png")
     preload_sprite("pu_twin.png")
     preload_sprite("pu_rocket.png")
+    preload_sprite("pu_color.png")
     preload_sprite("laser_green.png")
     preload_sprite("element_red_square_glossy.png")
     preload_sprite("element_yellow_square_glossy.png")

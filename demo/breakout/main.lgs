@@ -284,7 +284,7 @@ fn drop_pickup(x, y, kind) {
         img = "pu_color.png"
     }
     create("pickups", img, x, y, table{
-        vy: 1.1, spin: 5, scale: 0.7, w: 14, h: 14, kind: kind
+        vy: 1.1, spin: 5, scale: 0.4, w: 12, h: 12, kind: kind
     })
 }
 
@@ -661,9 +661,25 @@ fn ai_predict_x(id) {
     return lo + p
 }
 
-// steer the paddle under the lowest (closest) ball's predicted landing x
+// x-centroid of the remaining bricks; -1 if none (nothing to aim at)
+fn brick_centroid_x() {
+    let ids = group_ids("bricks")
+    let n = len(ids)
+    if n == 0 {
+        return -1.0
+    }
+    let sx = 0.0
+    for id in ids {
+        sx = sx + ent_get(id, "x")
+    }
+    return sx / (n * 1.0)
+}
+
+// steer the paddle under the lowest (closest) ball's predicted landing x.
+// When the ball is low and descending, bias the catch point so the bounce
+// is aimed at the brick cluster — otherwise a single ball loops one column
+// and the board never finishes.
 fn ai_steer() {
-    let target = ent_get(pid, "x")
     let best = -1
     let best_y = -9999.0
     for bid in group_ids("ball") {
@@ -674,7 +690,18 @@ fn ai_steer() {
         }
     }
     if best >= 0 {
-        target = ai_predict_x(best)
+    let bx = ent_get(best, "x")
+    let by = ent_get(best, "y")
+    let vy = ent_get(best, "vy")
+    let target = ai_predict_x(best)
+    if by > H - 52 && vy > 0 {
+        let tx = brick_centroid_x()
+        if tx >= 0 {
+            let want = (tx - bx) / 60.0
+            if want > 1 { want = 1 }
+            if want < -1 { want = -1 }
+            target = bx - want * 24
+        }
     }
     let px = ent_get(pid, "x")
     let d = target - px
@@ -688,13 +715,10 @@ fn ai_steer() {
             px = target
         }
     }
-    if px < 28 {
-        px = 28
-    }
-    if px > W - 28 {
-        px = W - 28
-    }
+    if px < 28 { px = 28 }
+    if px > W - 28 { px = W - 28 }
     ent_set(pid, "x", px)
+    }
 }
 
 fn on_draw_back() {

@@ -13,6 +13,7 @@ let state = "menu"       // menu | play | over | win
 let score = 0
 let lives = 3
 let pid = 0              // paddle entity id
+let ticks = 0            // global frame counter (juice timing)
 
 fn load_font_asset() {
     load_font("kenvector_future.ttf", 12)
@@ -26,7 +27,7 @@ fn spawn_paddle() {
 
 fn spawn_ball() {
     let bid = create("ball", "ballGrey.png", ent_get(pid, "x"), H - 34, table{
-        scale: 0.5, w: 9, h: 9,
+        scale: 0.5, w: 9, h: 9, spin: 10,
         vx: 0, vy: 0,
         spd: BALL_BASE
     })
@@ -38,6 +39,13 @@ fn spawn_ball() {
 }
 
 fn ball_tick(id) {
+    // motion trail: a fading star every other tick while the ball flies
+    ticks += 1
+    if ticks % 2 == 0 {
+        create("fx", "particleStar.png", ent_get(id, "x"), ent_get(id, "y"), table{
+            scale: 0.22, ttl: 9, spin: 8
+        })
+    }
     let x = ent_get(id, "x")
     if x < 8 {
         ent_set(id, "x", 8)
@@ -81,6 +89,8 @@ fn fix_vy(id) {
 
 fn lose_ball(id) {
     kill(id)
+    shake(10, 18)
+    burst(ent_get(id, "x"), H - 20)
     lives = lives - 1
     if lives <= 0 {
         state = "over"
@@ -109,6 +119,7 @@ fn build_bricks() {
             })
             on_death(bid, fn(id) {
                 burst(ent_get(id, "x"), ent_get(id, "y"))
+                shake(2, 5)
                 score += 25
                 if group_count("bricks") == 0 {
                     state = "win"

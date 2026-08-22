@@ -10,6 +10,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 
 	"github.com/codetesla51/logos/interpreter"
 )
@@ -17,26 +18,36 @@ import (
 // Entity is one thing in the world. Script-visible props live in fixed
 // fields; anything else a script puts in spawn props lands in Data.
 type Entity struct {
-	ID       int64
-	Group    string
-	Sprite   string
-	X, Y     float64
-	VX, VY   float64
-	Rot      float64 // degrees
-	Spin     float64 // degrees per tick
-	Scale    float64
-	HW, HH   float64 // half extents of hitbox (box centered on X, Y)
-	HP       int64
-	HasHP    bool                          // only hp-declaring entities can die by hp
-	TickFn   *interpreter.Function         // optional per-entity steering closure
-	TickDead bool                          // steering closure errored — stop calling it
-	Data     map[string]interpreter.Object // custom script keys (e.g. "kind")
-	Dead     bool
+	ID                     int64
+	Group                  string
+	Sprite                 string
+	X, Y                   float64
+	VX, VY                 float64
+	Rot                    float64 // degrees
+	Spin                   float64 // degrees per tick
+	Scale                  float64
+	HW, HH                 float64 // half extents of hitbox (box centered on X, Y)
+	HP                     int64
+	HasHP                  bool                  // only hp-declaring entities can die by hp
+	MaxHP                  int64                 // 0 = unset (defaults to spawn HP)
+	TickFn                 *interpreter.Function // optional per-entity steering closure
+	TickDead               bool                  // steering closure errored — stop calling it
+	DeathFn                *interpreter.Function // optional one-shot death handler
+	deathDone              bool
+	TTL                    int64   // ticks left before auto-death; -1 = infinite
+	InvUntil               int64   // world.Tick until which collisions ignore this entity
+	FlashR, FlashG, FlashB float64 // hit-flash tint (applied while Tick < FlashUntil)
+	FlashUntil             int64
+	BarDX, BarDY, BarW     float64 // attached HP bar offset/width
+	HasBar                 bool
+	Data                   map[string]interpreter.Object // custom script keys (e.g. "kind")
+	Dead                   bool
 }
 
 // Timer is an every()/after() registration.
 type Timer struct {
 	Interval int
+	Count    int // >0: fire exactly this many times, then stop
 	Fn       *interpreter.Function
 	Left     int
 	Repeat   bool
@@ -56,6 +67,7 @@ type World struct {
 	timers   []*Timer
 	rules    []CollideRule
 	nextID   int64
+	Tick     int64
 	active   bool // true once the script uses any ECS builtin
 	paused   bool // script freezes the world during menus/pause/game-over
 }
@@ -87,6 +99,20 @@ func (w *World) mustSpawn(e *Entity) int64 {
 func (w *World) kill(id int64) {
 	if e := w.byID[id]; e != nil {
 		e.Dead = true
+	}
+}
+
+// killEntity marks an entity dead and fires its on_death handler exactly
+// once. Damage, kill(), and ttl expiry all route through here; drifting
+// off-screen does NOT (culled entities die silently).
+func (g *Game) killEntity(e *Entity) {
+	if e.Dead {
+		return
+	}
+	e.Dead = true
+	if e.DeathFn != nil && !e.deathDone {
+		e.deathDone = true
+		g.callClosure(e.DeathFn, []interpreter.Object{&interpreter.Integer{Value: e.ID}})
 	}
 }
 
@@ -169,24 +195,36 @@ func (g *Game) simulate() {
 		return
 	}
 
-	// 1. timers
-	timers := w.timers[:0]
-	for _, t := range w.timers {
+	w.Tick++
+
+	// 1. timers — iterate a SNAPSHOT: callbacks may register new timers
+	// (after/after_n/every from inside handlers), and appending to the
+	// same backing array we're iterating corrupts the pending list.
+	snapshot := make([]*Timer, len(w.timers))
+	copy(snapshot, w.timers)
+	w.timers = nil // registrations made during callbacks collect here
+	var keep []*Timer
+	for _, t := range snapshot {
 		if t.FnDead {
 			continue
 		}
 		t.Left--
 		if t.Left <= 0 {
 			g.callClosure(t.Fn, nil)
-			if t.Repeat && !t.FnDead {
+			more := t.Repeat && !t.FnDead
+			if more && t.Count > 0 {
+				t.Count--
+				more = t.Count > 0
+			}
+			if more {
 				t.Left = t.Interval
-				timers = append(timers, t)
+				keep = append(keep, t)
 			}
 		} else {
-			timers = append(timers, t)
+			keep = append(keep, t)
 		}
 	}
-	w.timers = timers
+	w.timers = append(keep, w.timers...)
 
 	// 2. motion
 	for _, e := range w.entities {
@@ -195,14 +233,26 @@ func (g *Game) simulate() {
 		e.Rot += e.Spin
 	}
 
+	// 2.5 time-to-live expiry (routes through the death pipeline so
+	// on_death handlers fire for timed effects too)
+	for _, e := range w.entities {
+		if !e.Dead && e.TTL > 0 {
+			e.TTL--
+			if e.TTL == 0 {
+				g.killEntity(e)
+			}
+		}
+	}
+
 	// 3. per-entity steering hooks
 	for _, e := range w.entities {
-		if e.TickFn != nil && !e.TickDead {
+		if e.TickFn != nil && !e.TickDead && !e.Dead {
 			g.callClosure(e.TickFn, []interpreter.Object{&interpreter.Integer{Value: e.ID}})
 		}
 	}
 
-	// 4. collision rules
+	// 4. collision rules (skipped entirely while either side is invulnerable,
+	// so overlaps debounce instead of firing every frame)
 	for _, r := range w.rules {
 		as := w.group(r.A)
 		bs := w.group(r.B)
@@ -210,11 +260,11 @@ func (g *Game) simulate() {
 			continue
 		}
 		for _, a := range as {
-			if a.Dead {
+			if a.Dead || a.InvUntil > w.Tick {
 				continue
 			}
 			for _, b := range bs {
-				if b.Dead {
+				if b.Dead || b.InvUntil > w.Tick {
 					continue
 				}
 				if overlaps(a, b) {
@@ -230,11 +280,16 @@ func (g *Game) simulate() {
 		}
 	}
 
-	// 5. death by hp + cull far offscreen (generous top margin: spawners
-	// place things just above the screen and let them fall in)
+	// 5. death by hp (through the pipeline so on_death fires) + silent cull
+	// far offscreen (generous top margin: spawners place things just above
+	// the screen and let them fall in)
 	const margin = 90.0
 	for _, e := range w.entities {
-		if (e.HasHP && e.HP <= 0) || e.X < -margin || e.X > gameW+margin ||
+		if e.HasHP && e.HP <= 0 {
+			g.killEntity(e)
+			continue
+		}
+		if e.X < -margin || e.X > gameW+margin ||
 			e.Y > gameH+margin || e.Y < -margin*3 {
 			e.Dead = true
 		}
@@ -252,7 +307,8 @@ func (g *Game) simulate() {
 	w.entities = kept
 }
 
-// drawEntities queues every living entity for rendering.
+// drawEntities queues every living entity for rendering, plus any attached
+// fx: screen-shake jitter, hit-flash tint, HP bars.
 func (g *Game) drawEntities() {
 	for _, e := range g.world.entities {
 		scale := e.Scale
@@ -265,14 +321,47 @@ func (g *Game) drawEntities() {
 				continue
 			}
 		}
-		g.cmds = append(g.cmds, drawCmd{
+		x, y := e.X, e.Y
+		if g.shakeLeft > 0 {
+			x += (rand.Float64() - 0.5) * g.shakePow
+			y += (rand.Float64() - 0.5) * g.shakePow
+		}
+		cmd := drawCmd{
 			camX: g.camX, camY: g.camY,
 			kind:     "sprite_ex",
 			path:     e.Sprite,
-			x:        e.X,
-			y:        e.Y,
+			x:        x,
+			y:        y,
 			scale:    scale,
 			rotation: e.Rot,
-		})
+		}
+		if e.FlashUntil > g.world.Tick {
+			cmd.tintR, cmd.tintG, cmd.tintB = e.FlashR, e.FlashG, e.FlashB
+		}
+		g.cmds = append(g.cmds, cmd)
+
+		if e.HasBar && e.MaxHP > 0 {
+			pct := float64(e.HP) / float64(e.MaxHP)
+			if pct < 0 {
+				pct = 0
+			}
+			if pct > 1 {
+				pct = 1
+			}
+			bx := e.X + e.BarDX - e.BarW/2
+			by := e.Y + e.BarDY
+			col := "#2ecc71"
+			if pct <= 0.25 {
+				col = "#e74c3c"
+			} else if pct <= 0.55 {
+				col = "#f39c12"
+			}
+			g.cmds = append(g.cmds,
+				drawCmd{camX: g.camX, camY: g.camY, kind: "rect",
+					x: bx - 1, y: by - 1, w: e.BarW + 2, h: 5, color: "#1a1e26"},
+				drawCmd{camX: g.camX, camY: g.camY, kind: "rect",
+					x: bx, y: by, w: e.BarW * pct, h: 3, color: col},
+			)
+		}
 	}
 }

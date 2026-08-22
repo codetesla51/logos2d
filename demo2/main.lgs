@@ -132,7 +132,7 @@ fn start_game() {
     pid = create("player", "player.png", 160, 212, table{scale: 0.22, w: 10, h: 14})
     over_t = 0
     stop_music()
-    play_music("music.wav")
+    play_music("music.ogg")
     music_on = true
     set_world_paused(false)
     state = "play"
@@ -155,7 +155,7 @@ fn on_load() {
     preload_sprite("pu_twin.png")
     preload_sprite("pu_shield.png")
     preload_sprite("pu_heart.png")
-    play_music("music.wav")
+    play_music("music.ogg")
     music_on = true
     init_stars()
     register_rules()
@@ -311,7 +311,7 @@ fn on_update(dt) {
             stop_music()
             music_on = false
         } else {
-            play_music("music.wav")
+            play_music("music.ogg")
             music_on = true
         }
     }

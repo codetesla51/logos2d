@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/codetesla51/logos/interpreter"
 	"github.com/codetesla51/logos/logos"
 	"github.com/hajimehoshi/ebiten/v2"
@@ -211,12 +212,16 @@ func registerBindings(vm *interpreter.Interpreter, g *Game) {
 			e.HW = f / 2 // full extent prop -> half extents around center
 		case "h":
 			e.HH = f / 2
+		case "ttl":
+			e.TTL = int64(f)
+		case "max_hp":
+			e.MaxHP = int64(f)
 		}
 	}
 
 	isCoreKey := func(key string) bool {
 		switch key {
-		case "x", "y", "vx", "vy", "rot", "spin", "scale", "w", "h":
+		case "x", "y", "vx", "vy", "rot", "spin", "scale", "w", "h", "ttl", "max_hp":
 			return true
 		}
 		return false
@@ -273,6 +278,7 @@ func registerBindings(vm *interpreter.Interpreter, g *Game) {
 			Y:      toF(args[3]),
 			HP:     1, // default: alive unless props say otherwise
 			HasHP:  true,
+			TTL:    -1, // default: no expiry
 			Data:   map[string]interpreter.Object{},
 		}
 		if props, ok := args[4].(*logos.Table); ok {
@@ -287,12 +293,204 @@ func registerBindings(vm *interpreter.Interpreter, g *Game) {
 		if e.Scale == 0 {
 			e.Scale = 1
 		}
+		if e.MaxHP == 0 {
+			e.MaxHP = e.HP
+		}
 		id := g.world.mustSpawn(e)
 		return &logos.Integer{Value: id}
 	})
 
 	vm.Register("kill", func(args ...logos.Object) logos.Object {
-		g.world.kill(toI(args[0]))
+		if e := getEnt(args); e != nil {
+			g.killEntity(e)
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("damage", func(args ...logos.Object) logos.Object {
+		died := false
+		if e := getEnt(args); e != nil {
+			e.HP -= int64(toF(args[1]))
+			if died = e.HasHP && e.HP <= 0; died {
+				g.killEntity(e)
+			}
+		}
+		return &logos.Bool{Value: died}
+	})
+
+	vm.Register("heal", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			e.HP += int64(toF(args[1]))
+			if e.MaxHP > 0 && e.HP > e.MaxHP {
+				e.HP = e.MaxHP
+			}
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("max_hp", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			e.MaxHP = int64(toF(args[1]))
+			e.HasHP = true
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("invuln_after", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			e.InvUntil = g.world.Tick + int64(toF(args[1]))
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("on_death", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			if fn, ok := args[1].(*logos.Function); ok {
+				e.DeathFn = fn
+			}
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("ttl_left", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			return &logos.Integer{Value: e.TTL}
+		}
+		return &logos.Integer{Value: -1}
+	})
+
+	vm.Register("seek", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			dx := toF(args[1]) - e.X
+			dy := toF(args[2]) - e.Y
+			d := math.Sqrt(dx*dx + dy*dy)
+			sp := toF(args[3])
+			if d > 0.0001 {
+				if d < sp {
+					sp = d // arrive exactly, don't orbit the target
+				}
+				e.VX = dx / d * sp
+				e.VY = dy / d * sp
+			} else {
+				e.VX, e.VY = 0, 0
+			}
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("nearest", func(args ...logos.Object) logos.Object {
+		group := args[0].(*logos.String).Value
+		tx, ty := toF(args[1]), toF(args[2])
+		best := int64(-1)
+		bestD := math.MaxFloat64
+		for _, e := range g.world.group(group) {
+			dx := e.X - tx
+			dy := e.Y - ty
+			if d := dx*dx + dy*dy; d < bestD {
+				bestD = d
+				best = e.ID
+			}
+		}
+		return &logos.Integer{Value: best}
+	})
+
+	vm.Register("group_each", func(args ...logos.Object) logos.Object {
+		fn, ok := args[1].(*logos.Function)
+		if ok {
+			for _, e := range g.world.group(args[0].(*logos.String).Value) {
+				g.callClosure(fn, []interpreter.Object{&logos.Integer{Value: e.ID}})
+			}
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("after_n", func(args ...logos.Object) logos.Object {
+		fn, ok := args[2].(*logos.Function)
+		if ok {
+			n := int(toF(args[0]))
+			g.world.timers = append(g.world.timers, &Timer{
+				Interval: n,
+				Count:    int(toF(args[1])),
+				Fn:       fn,
+				Left:     n,
+				Repeat:   true,
+			})
+			g.world.active = true
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("knockback", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			fx, fy, force := toF(args[1]), toF(args[2]), toF(args[3])
+			dx, dy := e.X-fx, e.Y-fy
+			d := math.Sqrt(dx*dx + dy*dy)
+			if d > 0.0001 {
+				e.VX += dx / d * force
+				e.VY += dy / d * force
+			}
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("area_damage", func(args ...logos.Object) logos.Object {
+		tx, ty := toF(args[0]), toF(args[1])
+		radius, dmg := toF(args[2]), toF(args[3])
+		group := args[4].(*logos.String).Value
+		r2 := radius * radius
+		for _, e := range g.world.group(group) {
+			dx := e.X - tx
+			dy := e.Y - ty
+			if dx*dx+dy*dy <= r2 {
+				e.HP -= int64(dmg)
+				if e.HasHP && e.HP <= 0 {
+					g.killEntity(e)
+				}
+			}
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("shake", func(args ...logos.Object) logos.Object {
+		g.shakePow = toF(args[0])
+		g.shakeLeft = int(toF(args[1]))
+		return &logos.Null{}
+	})
+
+	vm.Register("flash", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			hexv := strings.TrimPrefix(args[1].(*logos.String).Value, "#")
+			var r, gc, b int
+			fmt.Sscanf(hexv, "%02x%02x%02x", &r, &gc, &b)
+			mx := float64(r)
+			if float64(gc) > mx {
+				mx = float64(gc)
+			}
+			if float64(b) > mx {
+				mx = float64(b)
+			}
+			if mx < 1 {
+				mx = 1
+			}
+			k := 2.0 / mx // dominant channel overbrightens for a strong wash
+			e.FlashR = float64(r) * k
+			e.FlashG = float64(gc) * k
+			e.FlashB = float64(b) * k
+			e.FlashUntil = g.world.Tick + int64(toF(args[2]))
+		}
+		return &logos.Null{}
+	})
+
+	vm.Register("hp_bar", func(args ...logos.Object) logos.Object {
+		if e := getEnt(args); e != nil {
+			e.BarDX = toF(args[1])
+			e.BarDY = toF(args[2])
+			e.BarW = toF(args[3])
+			e.HasBar = true
+			if e.MaxHP == 0 {
+				e.MaxHP = e.HP
+			}
+		}
 		return &logos.Null{}
 	})
 

@@ -36,14 +36,15 @@ const (
 // drawCmd is one queued drawing primitive, filled by the Logos draw_*
 // builtins during on_draw and rendered by Game.Draw.
 type drawCmd struct {
-	kind              string // "rect" | "circle" | "line" | "text" | "sprite"
-	x, y, w, h        float64
-	x2, y2            float64
-	radius, thickness float64
-	scale, rotation   float64 // rotation in degrees
-	camX, camY        float64 // camera snapshot taken when the cmd was queued
-	str, path         string
-	color             string
+	kind                string // "rect" | "circle" | "line" | "text" | "sprite"
+	x, y, w, h          float64
+	x2, y2              float64
+	radius, thickness   float64
+	scale, rotation     float64 // rotation in degrees
+	camX, camY          float64 // camera snapshot taken when the cmd was queued
+	str, path           string
+	color               string
+	tintR, tintG, tintB float64 // sprite_ex color multiply (0,0,0 zero-value = untinted)
 }
 
 type Game struct {
@@ -61,6 +62,8 @@ type Game struct {
 	sfxPCM               map[string][]byte // decoded sound effects by path
 	failedAudio          map[string]bool   // audio paths that failed to load (warn once)
 	musicPlayer          *audio.Player
+	shakePow             float64
+	shakeLeft            int
 	musicPending         bool
 	pendingMusicPath     string
 	musicGen             uint64 // invalidates in-flight decodes
@@ -349,6 +352,9 @@ func (g *Game) callHook(fn string, args ...interface{}) {
 }
 
 func (g *Game) Update() error {
+	if g.shakeLeft > 0 {
+		g.shakeLeft--
+	}
 	if g.musicPending {
 		g.musicPending = false
 		path := g.pendingMusicPath
@@ -421,6 +427,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			opts.GeoM.Translate(-w/2, -h/2)
 			opts.GeoM.Scale(c.scale, c.scale)
 			opts.GeoM.Rotate(c.rotation * math.Pi / 180) // degrees -> radians
+			if c.tintR != 0 || c.tintG != 0 || c.tintB != 0 {
+				opts.ColorM.Scale(c.tintR, c.tintG, c.tintB, 1)
+			}
 			opts.GeoM.Translate(wx, wy)
 			screen.DrawImage(img, opts)
 		case "sprite_frame":

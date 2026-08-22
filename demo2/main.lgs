@@ -30,14 +30,13 @@ let state = "menu"        // menu | play | pause | over
 let hp = 3
 let score = 0
 let kills = 0
-let inv = 0
+let blink_t = 0
 let frame_t = 0
 let cooldown = 0
 let weapon = "blue"
 let weapon_t = 0
 let shield_t = 0
 let music_on = true
-let shake_t = 0
 let over_t = 0
 let spawn_t = 30
 let foe_armed = 360       // next warship arrival
@@ -116,13 +115,12 @@ fn start_game() {
     hp = 3
     score = 0
     kills = 0
-    inv = 0
+    blink_t = 0
     cooldown = 0
     spawn_t = 30
     weapon = "blue"
     weapon_t = 0
     shield_t = 0
-    shake_t = 0
     booms = []
     parts = []
     foe_armed = frame_t + 360
@@ -155,6 +153,21 @@ fn on_load() {
     preload_sprite("pu_twin.png")
     preload_sprite("pu_shield.png")
     preload_sprite("pu_heart.png")
+    preload_sprite("meteor_brown.png")
+    preload_sprite("meteor_gray.png")
+    preload_sprite("meteor_red.png")
+    preload_sprite("meteor_white.png")
+    preload_sprite("eship_red.png")
+    preload_sprite("eship_blue.png")
+    preload_sprite("eship_green.png")
+    preload_sprite("planet_a.png")
+    preload_sprite("planet_b.png")
+    preload_sprite("planet_c.png")
+    preload_sprite("station_big.png")
+    preload_sprite("station_small.png")
+    preload_sprite("bldg_a.png")
+    preload_sprite("bldg_b.png")
+    preload_sprite("rocket.png")
     play_music("music.ogg")
     music_on = true
     init_stars()
@@ -166,29 +179,25 @@ fn on_load() {
 fn register_rules() {
     // bullets shred meteors (2 hp, knockback, sparks, drops)
     collide("bullets", "meteors", fn(b, m) {
-        let nhp = ent_get(m, "hp") - 1
-        ent_set(m, "hp", nhp)
         kill(b)
-        ent_set(m, "y", ent_get(m, "y") - 2)
         burst(ent_get(b, "x"), ent_get(b, "y") + 10, 3, "#f1c40f")
-        if nhp <= 0 {
+        knockback(m, ent_get(b, "x"), ent_get(b, "y"), 2.0)
+        let died = damage(m, 1)
+        if died {
             score += PTS_METEOR
             kills += 1
-            explode_at(ent_get(m, "x") + 10, ent_get(m, "y") + 10, "#a07050")
             if random(1, 6) == 1 {
                 drop_powerup(ent_get(m, "x") + 10, ent_get(m, "y"))
             }
-            kill(m)
+        } else {
+            flash(m, "#ffffff", 5)
         }
     })
 
     // bullets pop obstacle ships instantly
     collide("bullets", "ships", fn(b, e) {
         kill(b)
-        score += PTS_SHIP
-        kills += 1
-        explode_at(ent_get(e, "x"), ent_get(e, "y"), "#e74c3c")
-        kill(e)
+        damage(e, 99)
     })
 
     // bullets can shoot down enemy lasers mid-air
@@ -202,17 +211,8 @@ fn register_rules() {
     collide("bullets", "warship", fn(b, f) {
         kill(b)
         play_sound("hit.wav")
-        let nhp = ent_get(f, "hp") - 1
-        ent_set(f, "hp", nhp)
-        if nhp <= 0 {
-            score += PTS_WARSHIP
-            kills += 1
-            explode_at(ent_get(f, "x"), ent_get(f, "y"), "#ff00ff")
-            shake_t = 12
-            drop_powerup(ent_get(f, "x"), ent_get(f, "y") + 12)
-            kill(f)
-            foe_armed = frame_t + random(600, 1100)
-        }
+        flash(f, "#ff00ff", 5)
+        damage(f, 1)
     })
 
     // mother ships take hits
@@ -220,16 +220,8 @@ fn register_rules() {
         kill(b)
         play_sound("hit.wav")
         burst(ent_get(b, "x"), ent_get(b, "y") + 8, 2, "#7fdbff")
-        let nhp = ent_get(ms, "hp") - 1
-        ent_set(ms, "hp", nhp)
-        if nhp <= 0 {
-            score += PTS_MOTHER
-            kills += 1
-            explode_at(ent_get(ms, "x"), ent_get(ms, "y"), "#3498db")
-            shake_t = 12
-            drop_powerup(ent_get(ms, "x"), ent_get(ms, "y") + 12)
-            kill(ms)
-        }
+        flash(ms, "#7fdbff", 5)
+        damage(ms, 1)
     })
 
     // everything that hurts the player
@@ -265,16 +257,16 @@ fn register_rules() {
 }
 
 fn hurt_player() {
+    // engine skips collide pairs while the player is invulnerable, so this
+    // debounce is authoritative — no global counter needed
+    invuln_after(pid, 60)
+    blink_t = 60
     if shield_t > 0 {
         play_sound("shield_down.wav")
         return 0
     }
-    if inv > 0 {
-        return 0
-    }
     hp -= 1
-    inv = 60
-    shake_t = 8
+    shake(8, 8)
     play_sound("hurt.wav")
     return 0
 }
@@ -409,9 +401,9 @@ fn steer_player() {
     }
     ent_set(pid, "x", nx)
 
-    if inv > 0 {
-        inv -= 1
-        ent_set(pid, "hidden", inv > 0 && frame_t % 8 >= 5)
+    if blink_t > 0 {
+        blink_t -= 1
+        ent_set(pid, "hidden", frame_t % 8 >= 5)
     } else {
         ent_set(pid, "hidden", false)
     }
@@ -462,23 +454,38 @@ fn update_weapon_timers() {
             play_sound("shield_down.wav")
         }
     }
-    if shake_t > 0 {
-        shake_t -= 1
-    }
 }
 
 // ---------------- spawning ----------------
 
 fn spawn_meteor() {
-    create("meteors", "meteor.png", random(8, W - 30), -30, table{
+    let roll = random(1, 5)
+    let img = "meteor.png"
+    if roll == 2 {
+        img = "meteor_brown.png"
+    }
+    if roll == 3 {
+        img = "meteor_gray.png"
+    }
+    if roll == 4 {
+        img = "meteor_red.png"
+    }
+    if roll == 5 {
+        img = "meteor_white.png"
+    }
+    let sc = 0.38 + random(0, 18) / 100.0
+    let mid = create("meteors", img, random(8, W - 30), -30, table{
               vx: random(-8, 8) / 10.0,
               vy: random(8, 16) / 10.0,
               rot: random(0, 359),
               spin: random(-3, 3),
-              scale: 0.45,
+              scale: sc,
               hp: 2,
-              w: 19, h: 19
+              w: 19 * sc / 0.45, h: 19 * sc / 0.45
           })
+    on_death(mid, fn(id) {
+        explode_at(ent_get(id, "x") + 10, ent_get(id, "y") + 10, "#a07050")
+    })
 }
 
 fn spawn_ship() {
@@ -490,13 +497,16 @@ fn spawn_ship() {
     if roll == 3 {
         img = "enemy_green.png"
     }
-    create("ships", img, random(8, W - 26), -24, table{
+    let sid = create("ships", img, random(8, W - 26), -24, table{
               vx: random(-10, 10) / 10.0,
               vy: random(9, 15) / 10.0,
               rot: 180,
               scale: 0.45,
               w: 13, h: 13
           })
+    on_death(sid, fn(id) {
+        explode_at(ent_get(id, "x"), ent_get(id, "y"), "#e74c3c")
+    })
 }
 
 // warship + mother ships arrive on schedule; their whole AI is one
@@ -507,7 +517,16 @@ fn maybe_arm_foes() {
         if fhp > 20 {
             fhp = 20
         }
-let wid = create("warship", "ufo.png", 160, 55, table{scale: 0.38, hp: fhp, maxhp: fhp, w: 26, h: 26, shoot_t: 80, rot: 180})
+let wid = create("warship", "ufo.png", 160, 55, table{scale: 0.38, hp: fhp, max_hp: fhp, w: 26, h: 26, shoot_t: 80, rot: 180})
+        hp_bar(wid, 0, -20, 30)
+        on_death(wid, fn(id) {
+            score += PTS_WARSHIP
+            kills += 1
+            explode_at(ent_get(id, "x"), ent_get(id, "y"), "#ff00ff")
+            shake(8, 12)
+            drop_powerup(ent_get(id, "x"), ent_get(id, "y") + 12)
+            foe_armed = frame_t + random(600, 1100)
+        })
         print("WARSHIP INCOMING!")
         ent_on_tick(wid, fn(id) {
             // chase the player's column, bob, fire straight down
@@ -539,6 +558,14 @@ let wid = create("warship", "ufo.png", 160, 55, table{scale: 0.38, hp: fhp, maxh
 
 fn spawn_mother(cx, img, phase) {
     let mid = create("mothers", img, cx, -40, table{hp: MOTHER_HP, scale: 0.62, w: 34, h: 24, ph: phase, bx: cx, shoot_t: 100 + random(0, 40)})
+    hp_bar(mid, 0, -22, 36)
+    on_death(mid, fn(id) {
+        score += PTS_MOTHER
+        kills += 1
+        explode_at(ent_get(id, "x"), ent_get(id, "y"), "#3498db")
+        shake(8, 12)
+        drop_powerup(ent_get(id, "x"), ent_get(id, "y") + 12)
+    })
     ent_on_tick(mid, fn(id) {
         let y = ent_get(id, "y")
         if y < 52 {
@@ -596,7 +623,6 @@ fn update_fx() {
 // back: stars   [engine draws all entities]   front: HUD + juice
 
 fn on_draw_back() {
-    set_camera(shake_x(), shake_y())
     draw_rect(0, 0, W, H, "#000000")
     for s in stars_far {
         draw_rect(s.x, s.y, 1, 2, "#445566")
@@ -638,17 +664,8 @@ fn on_draw_front() {
         draw_circle(p.x, p.y, (20 - p.t) / 7 + 1, p.c)
     }
 
-    // enemy health bars
-    for wid in group_ids("warship") {
-        draw_rect(ent_get(wid, "x") - 16, ent_get(wid, "y") - 22, 32, 4, "#333333")
-        draw_rect(ent_get(wid, "x") - 15, ent_get(wid, "y") - 21, ent_get(wid, "hp") * 30 / ent_get(wid, "maxhp"), 2, "#e74c3c")
-    }
-    for mid in group_ids("mothers") {
-        draw_rect(ent_get(mid, "x") - 19, ent_get(mid, "y") - 24, 38, 4, "#333333")
-        draw_rect(ent_get(mid, "x") - 18, ent_get(mid, "y") - 23, ent_get(mid, "hp") * 36 / MOTHER_HP, 2, "#3498db")
-    }
+    // enemy health bars are attached to the entities themselves now
 
-    set_camera(0, 0)
     draw_hud()
 
     if state == "pause" {
@@ -682,13 +699,6 @@ fn draw_box_line(l1, l2, c1, c2) {
     draw_rect(55, 88, 210, 72, "#000000")
     draw_text(l1, 160 - text_width(l1) / 2, 104, c1)
     draw_text(l2, 160 - text_width(l2) / 2, 124, c2)
-}
-
-fn shake_x() {
-    return math_sin(frame_t * 93.0) * shake_t * 0.6
-}
-fn shake_y() {
-    return math_cos(frame_t * 71.0) * shake_t * 0.6
 }
 
 // ---------------- demo bot ----------------

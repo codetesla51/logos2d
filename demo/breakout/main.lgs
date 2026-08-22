@@ -95,7 +95,9 @@ fn lose_ball(id) {
     if lives <= 0 {
         state = "over"
         set_world_paused(true)
+        play_sound("game_over.ogg")
     } else {
+        play_sound("ball_lost.ogg")
         after(40, fn() { spawn_ball() })
     }
 }
@@ -121,9 +123,11 @@ fn build_bricks() {
                 burst(ent_get(id, "x"), ent_get(id, "y"))
                 shake(2, 5)
                 score += 25
+                play_sound("brick_break_${random(0, 4)}.ogg")
                 if group_count("bricks") == 0 {
                     state = "win"
                     set_world_paused(true)
+                    play_sound("win.ogg")
                 }
             })
         }
@@ -166,6 +170,7 @@ fn register_rules() {
         ent_set(bid, "vx", vx)
         ent_set(bid, "vy", 0.0 - math_sqrt(s * s - vx * vx))
         ent_set(bid, "y", ent_get(plid, "y") - 13)
+        play_sound("paddle_bounce.ogg")
         invuln_after(bid, 2)
     })
     collide("ball", "bricks", fn(bid, kid) {
@@ -194,6 +199,11 @@ fn register_rules() {
             ent_set(bid, "vx", ent_get(bid, "vx") * k)
             ent_set(bid, "vy", ent_get(bid, "vy") * k)
             ent_set(bid, "spd", s)
+        }
+        let hp = ent_get(kid, "hp")
+        if hp > 0 {
+            // survived the hit (2hp rows): weaker crack, not the break pop
+            play_sound("brick_crack.ogg")
         }
         invuln_after(bid, 2)
     })
@@ -241,6 +251,7 @@ fn on_update(dt) {
         if key_pressed("enter") {
             set_world_paused(false)
             start_game()
+            play_sound("confirm.ogg")
         }
     }
 }

@@ -59,6 +59,8 @@ type Game struct {
 	sfxPCM               map[string][]byte // decoded sound effects by path
 	failedAudio          map[string]bool   // audio paths that failed to load (warn once)
 	musicPlayer          *audio.Player
+	musicPending         bool
+	pendingMusicPath     string
 	scriptMod            time.Time // main.lgs mtime for hot reload
 }
 
@@ -247,18 +249,25 @@ func (g *Game) playSound(path string) {
 	p.Play() // finished players are garbage-collected by the audio context
 }
 
+// playMusic never decodes immediately: calls that land before
+// ebiten.RunGame starts ticking (e.g. from on_load) would block forever,
+// because streaming decode relies on the loop draining its buffer. We
+// stash the request and start playback on the first Update instead.
 func (g *Game) playMusic(path string) {
-	fmt.Println("[music] 1 load")
+	g.musicPending = true
+	g.pendingMusicPath = path
+}
+
+// startMusicNow performs the real (potentially slow) load + play. Only
+// ever called from Update, i.e. with the game loop already running.
+func (g *Game) startMusicNow(path string) {
 	pcm, err := g.loadAudio(path)
 	if err != nil {
 		fmt.Println("play_music:", err)
 		return
 	}
-	fmt.Println("[music] 2 loop")
 	loop := audio.NewInfiniteLoop(bytes.NewReader(pcm), int64(len(pcm)))
-	fmt.Println("[music] 3 newplayer")
 	p, err := g.audioCtx.NewPlayer(loop)
-	fmt.Println("[music] 4 created")
 	if err != nil {
 		fmt.Println("play_music:", err)
 		return
@@ -271,6 +280,8 @@ func (g *Game) playMusic(path string) {
 }
 
 func (g *Game) stopMusic() {
+	g.musicPending = false
+	g.pendingMusicPath = ""
 	if g.musicPlayer != nil {
 		g.musicPlayer.Close()
 		g.musicPlayer = nil
@@ -312,6 +323,12 @@ func (g *Game) callHook(fn string, args ...interface{}) {
 }
 
 func (g *Game) Update() error {
+	if g.musicPending {
+		g.musicPending = false
+		path := g.pendingMusicPath
+		g.pendingMusicPath = ""
+		g.startMusicNow(path)
+	}
 	g.pollInput()
 	g.checkHotReload()
 	callScript(g.vm, "on_update", 1.0/float64(ebiten.TPS()))
